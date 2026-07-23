@@ -27,6 +27,7 @@ describe("AppLayout", () => {
       history: createMemoryHistory(),
       routes: [
         { path: "/", component: AppLayout },
+        { path: "/profile", component: { template: "<div />" } },
         { path: "/sources", component: { template: "<div />" } },
       ],
     });

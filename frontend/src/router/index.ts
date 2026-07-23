@@ -6,6 +6,7 @@ import { isUnauthorizedError } from "../api/auth";
 import AppLayout from "../layouts/AppLayout.vue";
 import LoginView from "../views/LoginView.vue";
 import ServiceUnavailableView from "../views/ServiceUnavailableView.vue";
+import EnterpriseProfileView from "../views/EnterpriseProfileView.vue";
 
 type RouterOptions = {
   history?: RouterHistory;
@@ -28,6 +29,7 @@ export function createPolicyRouter(options: RouterOptions = {}) {
         component: AppLayout,
         children: [
           { path: "", name: "home", component: { template: "<section>工作台</section>" } },
+          { path: "profile", name: "enterprise-profile", component: EnterpriseProfileView },
           {
             path: "sources",
             name: "sources",
