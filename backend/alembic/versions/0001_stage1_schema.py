@@ -56,6 +56,9 @@ mysql_longtext = sa.Text().with_variant(mysql.LONGTEXT(), "mysql")
 normalized_url_type = sa.String(length=2048).with_variant(
     mysql.VARCHAR(length=2048, charset="ascii", collation="ascii_bin"), "mysql"
 )
+task_item_original_url_type = sa.String(length=2048).with_variant(
+    mysql.VARCHAR(length=2048, charset="ascii", collation="ascii_bin"), "mysql"
+)
 
 
 def _add_policy_current_foreign_keys() -> None:
@@ -282,7 +285,7 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("task_id", sa.Integer(), sa.ForeignKey("collection_tasks.id"), nullable=False),
         sa.Column("channel_id", sa.Integer(), sa.ForeignKey("source_channels.id"), nullable=False),
-        sa.Column("original_url", sa.String(length=2048), nullable=False),
+        sa.Column("original_url", task_item_original_url_type, nullable=False),
         sa.Column(
             "status", collection_task_item_status_type, nullable=False, server_default="pending"
         ),
@@ -290,6 +293,12 @@ def upgrade() -> None:
         sa.Column("error_message", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.UniqueConstraint(
+            "task_id",
+            "channel_id",
+            "original_url",
+            name="uq_collection_task_items_task_channel_url",
+        ),
     )
     op.create_table(
         "entity_evaluations",

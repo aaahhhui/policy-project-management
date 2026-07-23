@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 
 from app.db.base import Base, TimestampMixin
-from sqlalchemy import Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import Enum, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column
 
 COLLECTION_STATUSES = ("pending", "running", "succeeded", "partial_failed", "failed")
@@ -20,6 +21,9 @@ COLLECTION_TASK_ITEM_STATUS_TYPE = Enum(
     native_enum=False,
     create_constraint=True,
     validate_strings=True,
+)
+TASK_ITEM_ORIGINAL_URL_TYPE = String(2048).with_variant(
+    mysql.VARCHAR(2048, charset="ascii", collation="ascii_bin"), "mysql"
 )
 
 
@@ -43,11 +47,19 @@ class CollectionTask(Base, TimestampMixin):
 
 class CollectionTaskItem(Base, TimestampMixin):
     __tablename__ = "collection_task_items"
+    __table_args__ = (
+        UniqueConstraint(
+            "task_id",
+            "channel_id",
+            "original_url",
+            name="uq_collection_task_items_task_channel_url",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     task_id: Mapped[int] = mapped_column(ForeignKey("collection_tasks.id"), nullable=False)
     channel_id: Mapped[int] = mapped_column(ForeignKey("source_channels.id"), nullable=False)
-    original_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    original_url: Mapped[str] = mapped_column(TASK_ITEM_ORIGINAL_URL_TYPE, nullable=False)
     status: Mapped[str] = mapped_column(
         COLLECTION_TASK_ITEM_STATUS_TYPE, nullable=False, server_default="pending"
     )

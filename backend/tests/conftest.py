@@ -47,6 +47,10 @@ def db() -> Generator[Session, None, None]:
     with Session(engine, expire_on_commit=False) as session:
         yield session
         session.rollback()
+    # Policy.current_version_id forms a deliberate cycle with policy_versions.
+    # SQLite cannot topologically drop that cycle while foreign keys are enabled.
+    with engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
     Base.metadata.drop_all(engine)
 
 
