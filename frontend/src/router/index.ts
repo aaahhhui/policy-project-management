@@ -7,6 +7,7 @@ import AppLayout from "../layouts/AppLayout.vue";
 import LoginView from "../views/LoginView.vue";
 import ServiceUnavailableView from "../views/ServiceUnavailableView.vue";
 import EnterpriseProfileView from "../views/EnterpriseProfileView.vue";
+import PolicySourcesView from "../views/PolicySourcesView.vue";
 
 type RouterOptions = {
   history?: RouterHistory;
@@ -33,7 +34,7 @@ export function createPolicyRouter(options: RouterOptions = {}) {
           {
             path: "sources",
             name: "sources",
-            component: { template: "<section>政策来源</section>" },
+            component: PolicySourcesView,
             meta: { requiredRole: "applicant_owner" },
           },
         ],
