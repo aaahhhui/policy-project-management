@@ -1,12 +1,20 @@
+import os
 from collections.abc import Generator
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+os.environ.setdefault("JWT_SECRET", "test-secret-at-least-32-characters")
+
+from app.core.security import hash_password
 from app.db.base import Base
+from app.db.session import get_db
+from app.main import app
 from app.modules.auth import models as auth_models
+from app.modules.auth.models import Role, User
 from app.modules.collection import models as collection_models
 from app.modules.evaluations import models as evaluation_models
 from app.modules.policies import models as policy_models
@@ -40,3 +48,31 @@ def db() -> Generator[Session, None, None]:
         yield session
         session.rollback()
     Base.metadata.drop_all(engine)
+
+
+@pytest.fixture
+def seeded_owner_password() -> str:
+    return "owner-test-password"
+
+
+@pytest.fixture
+def seeded_owner(db: Session, seeded_owner_password: str) -> User:
+    role = Role(code="applicant_owner", name="申报负责人")
+    user = User(
+        login_name="owner",
+        display_name="申报负责人",
+        password_hash=hash_password(seeded_owner_password),
+        is_active=True,
+        roles=[role],
+    )
+    db.add(user)
+    db.commit()
+    return user
+
+
+@pytest.fixture
+def client(db: Session) -> Generator[TestClient, None, None]:
+    app.dependency_overrides[get_db] = lambda: db
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
