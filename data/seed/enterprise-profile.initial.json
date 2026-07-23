@@ -1,0 +1,357 @@
+{
+  "meta": {
+    "version": "0.1",
+    "generated_at": "2026-07-23T00:00:00+08:00",
+    "purpose": "MVP development seed draft",
+    "data_boundary": "public and non-confidential data only",
+    "production_import_ready": false,
+    "production_blockers": [
+      "Confirm Shenzhen entity legal-person status from business license",
+      "Verify Suzhou unified social credit code from business license",
+      "Complete registered address, exact establishment date, legal representative, registered capital and business scope for all entities",
+      "Verify current validity periods of qualification certificates"
+    ]
+  },
+  "shared_profile": {
+    "display_name": "适创科技",
+    "english_brand": "Supreium",
+    "industries": [
+      "工业软件",
+      "CAE仿真",
+      "智能制造数字化"
+    ],
+    "business_directions": [
+      "工业研发设计数字化",
+      "CAE求解与仿真分析",
+      "铸造及模具设计仿真",
+      "工艺优化",
+      "智能检测",
+      "工程服务与培训"
+    ],
+    "technical_capabilities": [
+      "CAE求解器",
+      "云原生三维渲染",
+      "云平台架构",
+      "检测算法",
+      "高性能计算"
+    ],
+    "products": [
+      "SupreCAST 智铸超云",
+      "Supreium ADR 智测皓微"
+    ],
+    "solutions": [
+      "智能工艺大脑",
+      "私有云",
+      "模型轻量化"
+    ],
+    "application_industries": [
+      "材料加工",
+      "汽车交通",
+      "航空航天",
+      "3C电子",
+      "核电"
+    ],
+    "contact_phone": "400-870-8600",
+    "contact_email": "contacts@supreium.com",
+    "employee_count": null,
+    "rd_employee_count": null,
+    "rd_investment_ratio": null,
+    "source_refs": [
+      "S01",
+      "S02",
+      "S03",
+      "S04"
+    ],
+    "verification_status": "public_verified"
+  },
+  "business_entities": [
+    {
+      "seed_code": "ENTITY-BEIJING",
+      "legal_name": "北京适创科技有限公司",
+      "entity_type": "独立法人",
+      "entity_type_verification_status": "pending_business_license_review",
+      "registered_region": {
+        "province": "北京市",
+        "city": "北京市",
+        "district": "海淀区"
+      },
+      "unified_social_credit_code": "91110108MA005TE7XD",
+      "established_on": null,
+      "public_establishment_text": "成立于2016年",
+      "registered_address": null,
+      "office_address": "北京市海淀区北京林业大学学研中心C座",
+      "legal_representative": null,
+      "registered_capital": null,
+      "business_scope": null,
+      "entity_status": "启用",
+      "public_info_checked_at": "2026-07-23T00:00:00+08:00",
+      "qualifications": [
+        {
+          "name": "国家高新技术企业",
+          "category": "高新技术企业",
+          "certificate_no": "20182010183601",
+          "issuing_authority": null,
+          "issued_on": null,
+          "valid_until": null,
+          "effective_status": "未明确",
+          "verification_status": "historical_public_record_pending_current_certificate",
+          "source_refs": [
+            "S05",
+            "S06"
+          ]
+        }
+      ],
+      "intellectual_properties": [
+        {
+          "type": "专利",
+          "name": "一种用于铸造模具热平衡分析的温度求解器建立方法",
+          "number": "CN112182908B",
+          "right_holder": "北京适创科技有限公司",
+          "granted_or_registered_on": "2024-04-02",
+          "current_status": "有效",
+          "verification_status": "public_patent_record",
+          "source_refs": [
+            "S10"
+          ]
+        }
+      ],
+      "rd_data": {
+        "employee_count": null,
+        "rd_employee_count": null,
+        "annual_revenue": null,
+        "rd_investment_amount": null,
+        "rd_investment_ratio": null,
+        "statistics_period": null
+      },
+      "source_refs": [
+        "S01",
+        "S05",
+        "S06",
+        "S10"
+      ]
+    },
+    {
+      "seed_code": "ENTITY-SUZHOU",
+      "legal_name": "苏州数算软云科技有限公司",
+      "entity_type": "独立法人",
+      "entity_type_verification_status": "pending_business_license_review",
+      "registered_region": {
+        "province": "江苏省",
+        "city": "苏州市",
+        "district": "吴江区"
+      },
+      "unified_social_credit_code": "91320509MA25593491",
+      "unified_social_credit_code_verification_status": "secondary_public_source_pending_business_license_review",
+      "established_on": null,
+      "public_establishment_text": "公开资料称成立于2021年1月",
+      "registered_address": null,
+      "office_address": "江苏省苏州市吴江区江陵街道云创路512号商会大厦11楼1101室",
+      "legal_representative": null,
+      "registered_capital": null,
+      "business_scope": null,
+      "entity_status": "启用",
+      "public_info_checked_at": "2026-07-23T00:00:00+08:00",
+      "qualifications": [
+        {
+          "name": "国家高新技术企业",
+          "category": "高新技术企业",
+          "certificate_no": null,
+          "issuing_authority": null,
+          "issued_on": null,
+          "valid_until": null,
+          "effective_status": "未明确",
+          "verification_status": "2023_filing_list_pending_current_certificate",
+          "source_refs": [
+            "S08"
+          ]
+        }
+      ],
+      "intellectual_properties": [
+        {
+          "type": "专利",
+          "name": "一种高压铸造过程中模具气压的计算方法",
+          "number": "CN115178723B",
+          "right_holder": "苏州数算软云科技有限公司",
+          "granted_or_registered_on": "2024-08-23",
+          "current_status": "有效",
+          "verification_status": "public_patent_record",
+          "source_refs": [
+            "S11"
+          ]
+        }
+      ],
+      "rd_data": {
+        "employee_count": null,
+        "rd_employee_count": null,
+        "annual_revenue": null,
+        "rd_investment_amount": null,
+        "rd_investment_ratio": null,
+        "statistics_period": null
+      },
+      "source_refs": [
+        "S01",
+        "S08",
+        "S09",
+        "S11",
+        "S14"
+      ]
+    },
+    {
+      "seed_code": "ENTITY-SHENZHEN",
+      "legal_name": "深圳适创腾扬科技有限公司",
+      "entity_type": "独立法人",
+      "entity_type_verification_status": "candidate_pending_business_license_review",
+      "registered_region": {
+        "province": "广东省",
+        "city": "深圳市",
+        "district": "光明区"
+      },
+      "unified_social_credit_code": null,
+      "established_on": null,
+      "public_establishment_text": "公开媒体援引企业信息平台称成立于2022年",
+      "registered_address": null,
+      "office_address": "深圳市光明区光明科技金融大厦一单元3602",
+      "legal_representative": null,
+      "registered_capital": null,
+      "registered_capital_candidate": {
+        "amount": 1000,
+        "currency": "CNY",
+        "unit": "万元",
+        "verification_status": "secondary_public_source_pending_business_license_review"
+      },
+      "business_scope": null,
+      "entity_status": "启用",
+      "public_info_checked_at": "2026-07-23T00:00:00+08:00",
+      "qualifications": [],
+      "intellectual_properties": [
+        {
+          "type": "专利",
+          "name": "一种车身仿真方法及相关装置",
+          "number": "CN120030856B",
+          "right_holder": "深圳适创腾扬科技有限公司",
+          "granted_or_registered_on": "2025-07-11",
+          "current_status": "有效",
+          "verification_status": "public_patent_record_pending_live_legal_status_review",
+          "source_refs": [
+            "S12",
+            "S13"
+          ]
+        }
+      ],
+      "rd_data": {
+        "employee_count": null,
+        "rd_employee_count": null,
+        "annual_revenue": null,
+        "rd_investment_amount": null,
+        "rd_investment_ratio": null,
+        "statistics_period": null
+      },
+      "source_refs": [
+        "S01",
+        "S12",
+        "S13"
+      ],
+      "evaluation_guard": "Do not use legal-person status or unified social credit code as confirmed facts until business license review is complete"
+    }
+  ],
+  "sources": [
+    {
+      "id": "S01",
+      "name": "适创科技官网—联系我们",
+      "url": "https://index.supreium.com/about/contactUs",
+      "source_type": "company_official",
+      "confidence": "high"
+    },
+    {
+      "id": "S02",
+      "name": "适创科技官网首页",
+      "url": "https://index.supreium.com/",
+      "source_type": "company_official",
+      "confidence": "high"
+    },
+    {
+      "id": "S03",
+      "name": "SupreCAST智铸超云",
+      "url": "https://index.supreium.com/productsAndServices/products/SupreCAST",
+      "source_type": "company_official",
+      "confidence": "high"
+    },
+    {
+      "id": "S04",
+      "name": "汽车交通行业解决方案",
+      "url": "https://index.supreium.com/business/industry/car",
+      "source_type": "company_official",
+      "confidence": "high"
+    },
+    {
+      "id": "S05",
+      "name": "海淀区政府公开报道",
+      "url": "https://hdzx.bjhd.gov.cn/2019/zxyx/szxw/202308/t20230829_4619036.shtml?type=computer",
+      "source_type": "government",
+      "confidence": "high"
+    },
+    {
+      "id": "S06",
+      "name": "国家外汇管理局北京外汇管理部公开名单",
+      "url": "https://www.safe.gov.cn/big5/big5/www.safe.gov.cn/beijing/file/file/20210416/4f62dd958447492aa5ee2ee0a9a68973.pdf",
+      "source_type": "government",
+      "confidence": "high"
+    },
+    {
+      "id": "S07",
+      "name": "北京市经济和信息化局拟支持项目名单",
+      "url": "https://jxj.beijing.gov.cn/jxdt/tzgg/202512/P020251210847207656107.pdf",
+      "source_type": "government",
+      "confidence": "high"
+    },
+    {
+      "id": "S08",
+      "name": "江苏省2023年第一批高新技术企业备案公示名单",
+      "url": "https://sst.suzhou.gov.cn/ndaservplat/Apps/kernel/index.php?s=%2FUpload%2FdownFileEx%2Fid%2FXQsz5NnkEj7-sqv0vq62VA",
+      "source_type": "government",
+      "confidence": "high"
+    },
+    {
+      "id": "S09",
+      "name": "苏州市知识产权强企补充名单公开转载",
+      "url": "https://www.keceyun.com/policy/newsdetail/100450.html",
+      "source_type": "secondary_public",
+      "confidence": "medium"
+    },
+    {
+      "id": "S10",
+      "name": "北京主体代表性专利",
+      "url": "https://patents.google.com/patent/CN112182908B/zh",
+      "source_type": "public_patent_database",
+      "confidence": "medium"
+    },
+    {
+      "id": "S11",
+      "name": "苏州主体代表性专利",
+      "url": "https://patents.google.com/patent/CN115178723B/zh",
+      "source_type": "public_patent_database",
+      "confidence": "medium"
+    },
+    {
+      "id": "S12",
+      "name": "深圳主体代表性专利",
+      "url": "https://patents.google.com/patent/CN120030856B/en",
+      "source_type": "public_patent_database",
+      "confidence": "medium"
+    },
+    {
+      "id": "S13",
+      "name": "深圳主体专利公开报道",
+      "url": "https://m.sohu.com/a/912720849_114984/",
+      "source_type": "secondary_public",
+      "confidence": "medium"
+    },
+    {
+      "id": "S14",
+      "name": "苏州主体公开招聘资料",
+      "url": "https://www.shushuqiuzhi.com/article/224897",
+      "source_type": "secondary_public",
+      "confidence": "low"
+    }
+  ]
+}
