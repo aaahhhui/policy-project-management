@@ -1,0 +1,62 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    env_file: .env
+    volumes:
+      - policy-files:/runtime/files
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  collector:
+    build: ./backend
+    command: python -m workers.collector
+    env_file: .env
+    volumes:
+      - policy-files:/runtime/files
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  evaluator:
+    build: ./backend
+    command: python -m workers.evaluator
+    env_file: .env
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  scheduler:
+    build: ./backend
+    command: python -m workers.scheduler
+    env_file: .env
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  web:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
+volumes:
+  mysql-data:
+  policy-files:
