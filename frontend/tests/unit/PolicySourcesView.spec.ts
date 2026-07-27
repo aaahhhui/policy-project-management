@@ -3,6 +3,7 @@ import ElementPlus from "element-plus";
 import { describe, expect, it, vi } from "vitest";
 
 import { createSource, getSources, toggleSource } from "../../src/api/sources";
+import { collectSource, getCollectionTask } from "../../src/api/collection";
 import PolicySourcesView from "../../src/views/PolicySourcesView.vue";
 
 vi.mock("../../src/api/sources", () => ({
@@ -10,6 +11,11 @@ vi.mock("../../src/api/sources", () => ({
   createSource: vi.fn(),
   updateSource: vi.fn(),
   toggleSource: vi.fn(),
+}));
+
+vi.mock("../../src/api/collection", () => ({
+  collectSource: vi.fn(),
+  getCollectionTask: vi.fn(),
 }));
 
 const pendingSource = {
@@ -24,6 +30,8 @@ const pendingSource = {
   latest_collection_at: null,
   latest_result: null,
 };
+
+const readySource = { ...pendingSource, id: 2, name: "Guangdong", adapter_status: "ready" as const };
 
 describe("PolicySourcesView", () => {
   it("makes a pending adaptation unmistakable without rendering a collection control", async () => {
@@ -151,5 +159,39 @@ describe("PolicySourcesView", () => {
     expect(edit.attributes("disabled")).toBeUndefined();
     expect(toggle.attributes("disabled")).toBeUndefined();
     expect(wrapper.get("[role=alert]").text()).toContain("无法更新来源状态");
+  });
+
+  it("polls a manually triggered task until partial failure remains visible", async () => {
+    vi.useFakeTimers();
+    vi.mocked(getSources).mockResolvedValue([readySource]);
+    vi.mocked(collectSource).mockResolvedValue({
+      id: 42,
+      source_id: readySource.id,
+      status: "pending",
+      discovered_count: 0,
+      succeeded_count: 0,
+      failed_count: 0,
+      items: [],
+    });
+    vi.mocked(getCollectionTask).mockResolvedValue({
+      id: 42,
+      source_id: readySource.id,
+      status: "partial_failed",
+      discovered_count: 2,
+      succeeded_count: 1,
+      failed_count: 1,
+      items: [{ id: 9, status: "failed", error_message: "snapshot failed" }],
+    });
+    const wrapper = mount(PolicySourcesView, { global: { plugins: [ElementPlus] } });
+    await vi.dynamicImportSettled();
+
+    await wrapper.get("button[aria-label='立即采集 Guangdong']").trigger("click");
+    expect(wrapper.text()).toContain("任务 #42");
+    await vi.advanceTimersByTimeAsync(3000);
+
+    expect(getCollectionTask).toHaveBeenCalledWith(42);
+    expect(wrapper.text()).toContain("部分失败");
+    expect(wrapper.text()).toContain("snapshot failed");
+    vi.useRealTimers();
   });
 });

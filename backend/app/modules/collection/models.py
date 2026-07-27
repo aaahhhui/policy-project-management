@@ -5,7 +5,7 @@ from datetime import datetime
 from app.db.base import Base, TimestampMixin
 from sqlalchemy import Enum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects import mysql
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 COLLECTION_STATUSES = ("pending", "running", "succeeded", "partial_failed", "failed")
 COLLECTION_TASK_STATUS_TYPE = Enum(
@@ -43,6 +43,9 @@ class CollectionTask(Base, TimestampMixin):
     succeeded_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     failed_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    items: Mapped[list[CollectionTaskItem]] = relationship(
+        back_populates="task", order_by="CollectionTaskItem.id"
+    )
 
 
 class CollectionTaskItem(Base, TimestampMixin):
@@ -65,3 +68,4 @@ class CollectionTaskItem(Base, TimestampMixin):
     )
     policy_id: Mapped[int | None] = mapped_column(ForeignKey("policies.id"), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    task: Mapped[CollectionTask] = relationship(back_populates="items")
