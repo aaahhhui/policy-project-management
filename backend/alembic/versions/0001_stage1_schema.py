@@ -237,6 +237,7 @@ def upgrade() -> None:
         sa.Column("prompt_version", sa.String(length=64), nullable=False),
         sa.Column("adapter_key", sa.String(length=64), nullable=False),
         sa.Column("model_name", sa.String(length=255), nullable=True),
+        sa.Column("claim_token", sa.String(length=36), nullable=True),
         sa.Column("profile_snapshot", sa.JSON(), nullable=False),
         sa.Column("summary", sa.Text(), nullable=True),
         sa.Column("key_conditions", sa.JSON(), nullable=True),

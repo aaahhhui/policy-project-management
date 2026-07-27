@@ -11,6 +11,7 @@ from app.modules.policies.contracts import AttachmentPayload, CollectedPolicyPay
 from app.modules.policies.files import DownloadedAttachment, FileStore
 from app.modules.policies.models import Policy, PolicyAttachment, PolicyDiscovery, PolicyVersion
 from app.modules.policies.service import PolicyIngestionService
+from app.modules.profiles.models import BusinessEntity
 from app.modules.sources.models import PolicySource, SourceChannel
 
 
@@ -56,6 +57,15 @@ def channels(db):
         is_enabled=True,
     )
     db.add_all((first, second))
+    db.add_all(
+        BusinessEntity(
+            seed_code=code,
+            legal_name=code.removeprefix("ENTITY-").title(),
+            data={"region": code.removeprefix("ENTITY-").lower()},
+            verification_status="candidate" if code == "ENTITY-SHENZHEN" else "verified",
+        )
+        for code in ("ENTITY-BEIJING", "ENTITY-SUZHOU", "ENTITY-SHENZHEN")
+    )
     db.commit()
     return first, second
 

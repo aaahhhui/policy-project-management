@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.modules.collection.models import CollectionTaskItem
+from app.modules.evaluations.service import EvaluationService
 from app.modules.policies.contracts import CollectedPolicyPayload, IngestionResult
 from app.modules.policies.files import (
     DownloadedAttachment,
@@ -366,6 +367,7 @@ class PolicyIngestionService:
             self.session.flush()
             policy.current_version_id = version.id
             self._save_attachments(policy.id, version_number, version.id, payload, created_paths)
+            EvaluationService(self.session).enqueue(version.id)
 
         return IngestionResult(
             policy_id=policy.id,
