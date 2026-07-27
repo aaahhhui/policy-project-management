@@ -7,6 +7,7 @@ from sqlalchemy.schema import CreateTable
 
 from app.modules.auth.models import User
 from app.modules.collection.models import CollectionTask, CollectionTaskItem
+from app.modules.policies.models import PolicyAttachment
 from app.modules.sources.models import PolicySource, SourceChannel
 
 
@@ -19,6 +20,12 @@ def test_task_item_has_named_exact_identity_contract_and_mysql_safe_url_column()
     assert "VARCHAR(2048) CHARACTER SET ascii COLLATE ascii_bin" in ddl
     assert "uq_collection_task_items_task_channel_url" in migration
     assert 2048 + 4 + 4 < 3072
+
+
+def test_attachment_source_url_uses_unindexed_long_text_storage() -> None:
+    ddl = str(CreateTable(PolicyAttachment.__table__).compile(dialect=mysql.dialect()))
+
+    assert "source_url LONGTEXT NOT NULL" in ddl
 
 
 def test_task_item_rejects_duplicate_exact_business_identity(db) -> None:

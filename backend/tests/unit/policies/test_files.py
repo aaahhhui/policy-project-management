@@ -30,6 +30,33 @@ def test_snapshot_uses_exact_path_fsync_and_atomic_replace(tmp_path, monkeypatch
     assert calls[1][1].name == "page.html"
 
 
+def test_snapshot_refuses_to_overwrite_preexisting_final_and_keeps_existing_content(tmp_path) -> None:
+    store = FileStore(tmp_path)
+    store.save_snapshot(12, 3, "winner")
+
+    with pytest.raises(FileExistsError):
+        store.save_snapshot(12, 3, "loser")
+
+    assert (tmp_path / "snapshots/12/3/page.html").read_text() == "winner"
+
+
+def test_snapshot_fsyncs_containing_directory_after_replace(tmp_path, monkeypatch) -> None:
+    calls: list[int] = []
+    original_open = __import__("os").open
+    probe = tmp_path / "directory-fsync-probe"
+    probe.write_bytes(b"")
+    monkeypatch.setattr(
+        "app.modules.policies.files.os.fsync", lambda descriptor: calls.append(descriptor)
+    )
+    monkeypatch.setattr(
+        "app.modules.policies.files.os.open", lambda directory, flags: original_open(probe, flags)
+    )
+
+    FileStore(tmp_path).save_snapshot(12, 3, "snapshot")
+
+    assert len(calls) == 2
+
+
 def test_safe_attachment_filename_blocks_traversal_and_avoids_overwrite() -> None:
     first = safe_attachment_filename("../../report.pdf", "https://example.test/file", ())
     second = safe_attachment_filename("report.pdf", "https://example.test/file", (first,))
@@ -39,8 +66,9 @@ def test_safe_attachment_filename_blocks_traversal_and_avoids_overwrite() -> Non
     assert "/" not in first and "\\" not in first
 
 
-def test_attachment_downloader_rejects_oversized_stream(monkeypatch) -> None:
+def test_attachment_downloader_rejects_oversized_stream() -> None:
     class Response:
+        status_code = 200
         headers = {"content-type": "application/pdf"}
 
         def raise_for_status(self) -> None:
@@ -53,13 +81,20 @@ def test_attachment_downloader_rejects_oversized_stream(monkeypatch) -> None:
     def stream(*args, **kwargs):
         yield Response()
 
-    monkeypatch.setattr("app.modules.policies.files.httpx.stream", stream)
+    class Client:
+        def stream(self, *args, **kwargs):
+            return stream()
+
+        def close(self) -> None:
+            pass
 
     with pytest.raises(ValueError, match="30 MiB"):
-        HttpAttachmentDownloader().download("https://example.test/large.pdf")
+        HttpAttachmentDownloader(
+            client_factory=lambda: Client(), resolver=lambda host: ["8.8.8.8"]
+        ).download("https://example.test/large.pdf")
 
 
-def test_attachment_downloader_exposes_timeout(monkeypatch) -> None:
+def test_attachment_downloader_exposes_timeout() -> None:
     calls: list[dict[str, object]] = []
 
     @contextmanager
@@ -68,14 +103,23 @@ def test_attachment_downloader_exposes_timeout(monkeypatch) -> None:
         raise httpx.TimeoutException("timed out")
         yield
 
-    monkeypatch.setattr("app.modules.policies.files.httpx.stream", timeout)
+    class Client:
+        def stream(self, *args, **kwargs):
+            return timeout(*args, **kwargs)
+
+        def close(self) -> None:
+            pass
+
     with pytest.raises(httpx.TimeoutException):
-        HttpAttachmentDownloader().download("https://example.test/timeout.pdf")
-    assert calls == [{"timeout": 20.0, "follow_redirects": True}]
+        HttpAttachmentDownloader(
+            client_factory=lambda: Client(), resolver=lambda host: ["8.8.8.8"]
+        ).download("https://example.test/timeout.pdf")
+    assert calls == [{"timeout": 20.0, "follow_redirects": False}]
 
 
-def test_attachment_downloader_exposes_http_error(monkeypatch) -> None:
+def test_attachment_downloader_exposes_http_error() -> None:
     class Response:
+        status_code = 404
         headers = {}
 
         def raise_for_status(self) -> None:
@@ -87,6 +131,78 @@ def test_attachment_downloader_exposes_http_error(monkeypatch) -> None:
     def stream(*args, **kwargs):
         yield Response()
 
-    monkeypatch.setattr("app.modules.policies.files.httpx.stream", stream)
+    class Client:
+        def stream(self, *args, **kwargs):
+            return stream()
+
+        def close(self) -> None:
+            pass
+
     with pytest.raises(httpx.HTTPStatusError):
-        HttpAttachmentDownloader().download("https://example.test/missing.pdf")
+        HttpAttachmentDownloader(
+            client_factory=lambda: Client(), resolver=lambda host: ["8.8.8.8"]
+        ).download("https://example.test/missing.pdf")
+
+
+def test_attachment_downloader_rejects_private_urls_before_request() -> None:
+    downloader = HttpAttachmentDownloader(resolver=lambda host: ["127.0.0.1"])
+
+    with pytest.raises(ValueError, match="publicly routable"):
+        downloader.download("http://internal.example/private.pdf")
+
+
+def test_attachment_downloader_validates_manual_redirect_destinations() -> None:
+    class Response:
+        status_code = 302
+        headers = {"location": "http://127.0.0.1/private.pdf"}
+
+        def raise_for_status(self) -> None:
+            pass
+
+    @contextmanager
+    def stream(*args, **kwargs):
+        yield Response()
+
+    class Client:
+        def stream(self, *args, **kwargs):
+            return stream()
+
+        def close(self) -> None:
+            pass
+
+    downloader = HttpAttachmentDownloader(
+        client_factory=lambda: Client(),
+        resolver=lambda host: ["127.0.0.1"] if host == "127.0.0.1" else ["8.8.8.8"],
+    )
+    with pytest.raises(ValueError, match="publicly routable"):
+        downloader.download("https://public.example/file.pdf")
+
+
+def test_attachment_downloader_rejects_oversized_content_length_before_streaming() -> None:
+    class Response:
+        status_code = 200
+        headers = {"content-length": str(MAX_ATTACHMENT_BYTES + 1)}
+
+        def raise_for_status(self) -> None:
+            pass
+
+        def iter_bytes(self):
+            raise AssertionError("body should not be read")
+            yield b""
+
+    @contextmanager
+    def stream(*args, **kwargs):
+        yield Response()
+
+    class Client:
+        def stream(self, *args, **kwargs):
+            return stream()
+
+        def close(self) -> None:
+            pass
+
+    downloader = HttpAttachmentDownloader(
+        client_factory=lambda: Client(), resolver=lambda host: ["8.8.8.8"]
+    )
+    with pytest.raises(ValueError, match="30 MiB"):
+        downloader.download("https://public.example/file.pdf")

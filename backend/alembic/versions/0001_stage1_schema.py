@@ -272,7 +272,7 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("policy_version_id", sa.Integer(), sa.ForeignKey("policy_versions.id"), nullable=False),
         sa.Column("display_name", sa.String(length=512), nullable=False),
-        sa.Column("source_url", sa.String(length=2048), nullable=False),
+        sa.Column("source_url", mysql_longtext, nullable=False),
         sa.Column("stored_path", sa.String(length=1024), nullable=True),
         sa.Column("content_type", sa.String(length=255), nullable=True),
         sa.Column("status", attachment_status_type, nullable=False, server_default="pending"),

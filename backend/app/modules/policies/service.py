@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Protocol
+from contextlib import contextmanager
+from typing import Iterator, Protocol
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.modules.collection.models import CollectionTaskItem
 from app.modules.policies.contracts import CollectedPolicyPayload, IngestionResult
 from app.modules.policies.files import (
     DownloadedAttachment,
@@ -15,6 +17,7 @@ from app.modules.policies.files import (
     HttpAttachmentDownloader,
     safe_attachment_filename,
 )
+from app.modules.policies.locks import IngestionLock
 from app.modules.policies.models import Policy, PolicyAttachment, PolicyDiscovery, PolicyVersion
 from app.modules.policies.normalize import content_hash, normalize_text, normalize_url
 from app.modules.sources.models import SourceChannel
@@ -37,15 +40,57 @@ class PolicyIngestionService:
         self.attachment_downloader = attachment_downloader or HttpAttachmentDownloader()
 
     def ingest(self, payload: CollectedPolicyPayload) -> IngestionResult:
+        with IngestionLock(self.session).hold():
+            return self._run_ingestion(payload)
+
+    def ingest_and_mark_task_item(self, payload: CollectedPolicyPayload) -> IngestionResult:
         created_paths: list[str] = []
         try:
-            with self.session.begin():
+            with IngestionLock(self.session).hold(), self._transaction():
+                task_item = self._exact_task_item(payload)
+                result = self._ingest_in_transaction(payload, created_paths)
+                task_item.status = "succeeded"
+                task_item.policy_id = result.policy_id
+                task_item.error_message = None
+            return result
+        except Exception:
+            for path in reversed(created_paths):
+                self.file_store.remove_file(path)
+            raise
+
+    def _run_ingestion(self, payload: CollectedPolicyPayload) -> IngestionResult:
+        created_paths: list[str] = []
+        try:
+            with self._transaction():
                 result = self._ingest_in_transaction(payload, created_paths)
             return result
         except Exception:
             for path in reversed(created_paths):
                 self.file_store.remove_file(path)
             raise
+
+    @contextmanager
+    def _transaction(self) -> Iterator[None]:
+        if self.session.in_transaction():
+            if self.session.new or self.session.dirty or self.session.deleted:
+                raise RuntimeError("PolicyIngestionService requires a clean session")
+            self.session.rollback()
+        with self.session.begin():
+            yield
+
+    def _exact_task_item(self, payload: CollectedPolicyPayload) -> CollectionTaskItem:
+        matches = self.session.scalars(
+            select(CollectionTaskItem)
+            .where(
+                CollectionTaskItem.task_id == payload.task_id,
+                CollectionTaskItem.channel_id == payload.channel_id,
+                CollectionTaskItem.original_url == payload.original_url,
+            )
+            .limit(2)
+        ).all()
+        if len(matches) != 1:
+            raise ValueError(f"expected exactly one task item; found {len(matches)}")
+        return matches[0]
 
     def _ingest_in_transaction(
         self, payload: CollectedPolicyPayload, created_paths: list[str]
@@ -188,29 +233,50 @@ class PolicyIngestionService:
     ) -> None:
         used_names: list[str] = []
         for attachment in payload.attachments:
-            filename = safe_attachment_filename(
-                attachment.display_name, attachment.source_url, used_names
+            display_name, source_url = _attachment_metadata(
+                attachment.display_name, attachment.source_url
             )
+            filename = safe_attachment_filename(display_name, source_url, used_names)
             used_names.append(filename)
-            record = PolicyAttachment(
-                policy_version_id=version_id,
-                display_name=attachment.display_name,
-                source_url=attachment.source_url,
-                status="pending",
-            )
-            self.session.add(record)
+            stored_path: str | None = None
             try:
-                downloaded = self.attachment_downloader.download(attachment.source_url)
-                stored_path = self.file_store.save_attachment(
-                    policy_id, version_number, filename, downloaded.content
-                )
+                with self.session.begin_nested():
+                    record = PolicyAttachment(
+                        policy_version_id=version_id,
+                        display_name=display_name,
+                        source_url=source_url,
+                        status="pending",
+                    )
+                    self.session.add(record)
+                    self.session.flush()
+                    downloaded = self.attachment_downloader.download(source_url)
+                    stored_path = self.file_store.save_attachment(
+                        policy_id, version_number, filename, downloaded.content
+                    )
+                    record.stored_path = stored_path
+                    record.content_type = (downloaded.content_type or "")[:255] or None
+                    record.status = "downloaded"
+                    self.session.flush()
                 created_paths.append(stored_path)
-                record.stored_path = stored_path
-                record.content_type = downloaded.content_type
-                record.status = "downloaded"
             except Exception as error:
-                record.status = "failed"
-                record.error_message = _bounded_error(error)
+                if stored_path is not None:
+                    self.file_store.remove_file(stored_path)
+                try:
+                    with self.session.begin_nested():
+                        self.session.add(
+                            PolicyAttachment(
+                                policy_version_id=version_id,
+                                display_name=display_name,
+                                source_url=source_url,
+                                status="failed",
+                                error_message=_bounded_error(error),
+                            )
+                        )
+                        self.session.flush()
+                except Exception:
+                    # The policy/version transaction remains valid even when a corrupt attachment
+                    # cannot be represented safely in the attachment table.
+                    pass
 
 
 def _parse_date(value: date | str | None) -> date | None:
@@ -224,6 +290,14 @@ def _parse_date(value: date | str | None) -> date | None:
 
 def _bounded_error(error: Exception) -> str:
     return str(error)[:1000] or error.__class__.__name__
+
+
+def _attachment_metadata(display_name: str, source_url: str) -> tuple[str, str]:
+    normalized_name = normalize_text(display_name)[:512] or "attachment"
+    normalized_url = source_url.strip()[:65535]
+    if not normalized_url:
+        raise ValueError("attachment source URL must not be blank")
+    return normalized_name, normalized_url
 
 
 def default_file_store() -> FileStore:

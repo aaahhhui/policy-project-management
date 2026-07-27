@@ -16,10 +16,16 @@ from policy_crawler.pipelines import DatabaseIngestionPipeline, TaskItemLookupEr
 class FakeIngestionService:
     should_fail: bool = False
     policy_id: int = 0
+    task_item: CollectionTaskItem | None = None
+    session: object | None = None
 
-    def ingest(self, payload):
+    def ingest_and_mark_task_item(self, payload):
         if self.should_fail:
             raise RuntimeError("deliberately failed ingestion")
+        assert self.task_item is not None and self.session is not None
+        self.task_item.status = "succeeded"
+        self.task_item.policy_id = self.policy_id
+        self.session.commit()
         return IngestionResult(
             policy_id=self.policy_id, version_id=17, created_policy=True, created_version=True
         )
@@ -85,7 +91,10 @@ def item(task_id: int, channel_id: int, url: str):
 def test_pipeline_marks_each_exact_task_item_success_or_failure_and_continues(db) -> None:
     task, channel, succeeded, failed, policy = setup_task_items(db)
     services = iter(
-        (FakeIngestionService(policy_id=policy.id), FakeIngestionService(should_fail=True))
+        (
+            FakeIngestionService(policy_id=policy.id, task_item=succeeded, session=db),
+            FakeIngestionService(should_fail=True),
+        )
     )
     pipeline = DatabaseIngestionPipeline(lambda: db, service_factory=lambda session: next(services))
     pipeline.open_spider(None)
@@ -149,3 +158,15 @@ def test_exact_task_item_lookup_rejects_corrupt_multiple_matches() -> None:
 
     with pytest.raises(TaskItemLookupError, match="found 2"):
         DatabaseIngestionPipeline._exact_task_item(Session(), payload)
+
+
+def test_malformed_item_is_isolated_and_a_following_valid_item_still_processes(db) -> None:
+    task, channel, succeeded, _, policy = setup_task_items(db)
+    service = FakeIngestionService(policy_id=policy.id, task_item=succeeded, session=db)
+    pipeline = DatabaseIngestionPipeline(lambda: db, service_factory=lambda session: service)
+    pipeline.open_spider(None)
+
+    assert pipeline.process_item({"task_id": "bad"}, None) == {"task_id": "bad"}
+    pipeline.process_item(item(task.id, channel.id, succeeded.original_url), None)
+
+    assert db.get(CollectionTaskItem, succeeded.id).status == "succeeded"

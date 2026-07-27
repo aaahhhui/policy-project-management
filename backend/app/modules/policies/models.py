@@ -119,7 +119,7 @@ class PolicyAttachment(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     policy_version_id: Mapped[int] = mapped_column(ForeignKey("policy_versions.id"), nullable=False)
     display_name: Mapped[str] = mapped_column(String(512), nullable=False)
-    source_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    source_url: Mapped[str] = mapped_column(MYSQL_LONGTEXT, nullable=False)
     stored_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     content_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(ATTACHMENT_STATUS_TYPE, nullable=False, server_default="pending")

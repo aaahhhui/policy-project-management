@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from sqlalchemy import func, select
@@ -248,3 +249,23 @@ def test_attachment_failure_is_non_blocking_and_preserves_metadata(db, channels,
     assert (tmp_path / attachments[0].stored_path).read_bytes() == b"good"
     assert attachments[1].stored_path is None
     assert "timed out" in (attachments[1].error_message or "")
+
+
+def test_concurrent_cross_channel_first_ingestion_is_serialized(db, channels, tmp_path) -> None:
+    first_channel, second_channel = channels
+    bind = db.get_bind()
+
+    def ingest(channel_id: int) -> int:
+        from sqlalchemy.orm import Session
+
+        with Session(bind, expire_on_commit=False) as session:
+            return PolicyIngestionService(session, file_store=FileStore(tmp_path)).ingest(
+                payload(channel_id)
+            ).policy_id
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        policy_ids = list(executor.map(ingest, (first_channel.id, second_channel.id)))
+
+    assert policy_ids[0] == policy_ids[1]
+    assert db.scalar(select(func.count(Policy.id))) == 1
+    assert db.scalar(select(func.count(PolicyDiscovery.id))) == 2

@@ -41,7 +41,7 @@ def normalize_url(url: str) -> str:
         for key, value in parse_qsl(parsed.query, keep_blank_values=True)
         if not _is_tracking_query(key)
     ]
-    query = urlencode(sorted(query_pairs), doseq=True, quote_via=quote, safe="-._~")
+    query = urlencode(query_pairs, doseq=True, quote_via=quote, safe="-._~")
     return urlunsplit((scheme, host, path, query, ""))
 
 

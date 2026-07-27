@@ -48,49 +48,55 @@ class DatabaseIngestionPipeline:
 
     def process_item(self, item: dict[str, Any], spider: Any) -> dict[str, Any]:
         session = self._require_session()
-        payload = _payload_from_item(item)
+        identity: tuple[int, int, str] | None = None
         try:
-            task_item = self._exact_task_item(session, payload)
-            # The lookup is read-only but SQLAlchemy begins a transaction for it.
-            # End it before the ingestion service opens the per-item transaction.
-            session.commit()
-            result = self._service_factory(session).ingest(payload)
-            task_item.status = "succeeded"
-            task_item.policy_id = result.policy_id
-            task_item.error_message = None
-            session.commit()
-        except TaskItemLookupError as error:
-            session.rollback()
-            _log_item_failure(spider, error)
+            identity = _task_identity(item)
+            payload = _payload_from_item(item, identity)
+            self._service_factory(session).ingest_and_mark_task_item(payload)
         except Exception as error:
             session.rollback()
-            try:
+            if identity is None:
+                _log_item_failure(spider, error)
+            else:
+                self._mark_failed(session, identity, error, spider)
+        return item
+
+    def _mark_failed(
+        self, session: Session, identity: tuple[int, int, str], error: Exception, spider: Any
+    ) -> None:
+        try:
+            with session.begin():
+                task_item = self._exact_task_item_by_identity(session, identity)
                 task_item.status = "failed"
                 task_item.error_message = _bounded_error(error)
-                session.commit()
-            except UnboundLocalError:
-                # An exact task item was not found, so there is no safe row to mutate.
-                _log_item_failure(spider, error)
-            except Exception:
-                session.rollback()
-                _log_item_failure(spider, error)
-        return item
+        except Exception as mark_error:
+            session.rollback()
+            _log_item_failure(spider, mark_error)
 
     @staticmethod
     def _exact_task_item(session: Session, payload: CollectedPolicyPayload) -> CollectionTaskItem:
+        return DatabaseIngestionPipeline._exact_task_item_by_identity(
+            session, (payload.task_id, payload.channel_id, payload.original_url)
+        )
+
+    @staticmethod
+    def _exact_task_item_by_identity(
+        session: Session, identity: tuple[int, int, str]
+    ) -> CollectionTaskItem:
+        task_id, channel_id, original_url = identity
         matches = session.scalars(
             select(CollectionTaskItem)
             .where(
-                CollectionTaskItem.task_id == payload.task_id,
-                CollectionTaskItem.channel_id == payload.channel_id,
-                CollectionTaskItem.original_url == payload.original_url,
+                CollectionTaskItem.task_id == task_id,
+                CollectionTaskItem.channel_id == channel_id,
+                CollectionTaskItem.original_url == original_url,
             )
             .limit(2)
         ).all()
         if len(matches) != 1:
             raise TaskItemLookupError(
                 "expected exactly one collection task item for "
-                f"task={payload.task_id}, channel={payload.channel_id}, url={payload.original_url[:500]!r}; "
+                f"task={task_id}, channel={channel_id}, url={original_url[:500]!r}; "
                 f"found {len(matches)}"
             )
         return matches[0]
@@ -101,12 +107,24 @@ class DatabaseIngestionPipeline:
         return self._session
 
 
-def _payload_from_item(item: dict[str, Any]) -> CollectedPolicyPayload:
+def _task_identity(item: dict[str, Any]) -> tuple[int, int, str]:
+    task_id = int(item["task_id"])
+    channel_id = int(item["channel_id"])
+    original_url = str(item["original_url"])
+    if not original_url:
+        raise ValueError("original_url must not be empty")
+    return task_id, channel_id, original_url
+
+
+def _payload_from_item(
+    item: dict[str, Any], identity: tuple[int, int, str]
+) -> CollectedPolicyPayload:
+    task_id, channel_id, original_url = identity
     return CollectedPolicyPayload(
-        task_id=int(item["task_id"]),
-        channel_id=int(item["channel_id"]),
+        task_id=task_id,
+        channel_id=channel_id,
         title=str(item["title"]),
-        original_url=str(item["original_url"]),
+        original_url=original_url,
         published_on=item.get("published_on"),
         document_number=item.get("document_number"),
         deadline_on=item.get("deadline_on"),
