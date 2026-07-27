@@ -8,6 +8,8 @@ import LoginView from "../views/LoginView.vue";
 import ServiceUnavailableView from "../views/ServiceUnavailableView.vue";
 import EnterpriseProfileView from "../views/EnterpriseProfileView.vue";
 import PolicySourcesView from "../views/PolicySourcesView.vue";
+import PolicyCenterView from "../views/PolicyCenterView.vue";
+import PolicyDetailView from "../views/PolicyDetailView.vue";
 
 type RouterOptions = {
   history?: RouterHistory;
@@ -31,6 +33,8 @@ export function createPolicyRouter(options: RouterOptions = {}) {
         children: [
           { path: "", name: "home", component: { template: "<section>工作台</section>" } },
           { path: "profile", name: "enterprise-profile", component: EnterpriseProfileView },
+          { path: "policies", name: "policies", component: PolicyCenterView },
+          { path: "policies/:id", name: "policy-detail", component: PolicyDetailView },
           {
             path: "sources",
             name: "sources",

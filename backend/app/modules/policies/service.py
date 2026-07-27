@@ -5,7 +5,7 @@ from pathlib import Path
 from contextlib import contextmanager
 from typing import Iterator, Protocol
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -19,12 +19,200 @@ from app.modules.policies.files import (
 )
 from app.modules.policies.locks import IngestionLock
 from app.modules.policies.models import Policy, PolicyAttachment, PolicyDiscovery, PolicyVersion
+from app.modules.policies.schemas import (
+    PolicyAttachmentResponse,
+    PolicyDetail,
+    PolicyDiscoveryResponse,
+    PolicyListItem,
+    PolicyPage,
+    PolicyVersionResponse,
+    SourceOption,
+)
 from app.modules.policies.normalize import content_hash, normalize_text, normalize_url
-from app.modules.sources.models import SourceChannel
+from app.modules.sources.models import PolicySource, SourceChannel
 
 
 class AttachmentDownloader(Protocol):
     def download(self, source_url: str) -> DownloadedAttachment: ...
+
+
+class PolicyNotFound(Exception):
+    pass
+
+
+class PolicyQueryService:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def list_policies(
+        self,
+        *,
+        q: str | None = None,
+        source_id: int | None = None,
+        published_from: date | None = None,
+        published_to: date | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> PolicyPage:
+        filters = []
+        keyword = normalize_text(q or "")
+        if keyword:
+            pattern = f"%{keyword}%"
+            filters.append(
+                or_(Policy.title.like(pattern), Policy.document_number.like(pattern))
+            )
+        if published_from is not None:
+            filters.append(Policy.published_on >= published_from)
+        if published_to is not None:
+            filters.append(Policy.published_on <= published_to)
+
+        id_query = select(Policy.id).where(*filters)
+        if source_id is not None:
+            id_query = id_query.join(PolicyDiscovery).where(
+                PolicyDiscovery.source_id == source_id
+            )
+        id_query = id_query.distinct()
+        total = int(
+            self.session.scalar(
+                select(func.count()).select_from(id_query.subquery())
+            )
+            or 0
+        )
+        ids = list(
+            self.session.scalars(
+                id_query.order_by(
+                    Policy.published_on.is_(None).asc(),
+                    Policy.published_on.desc(),
+                    Policy.id.desc(),
+                )
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        )
+        if not ids:
+            return PolicyPage(items=[], page=page, page_size=page_size, total=total)
+        policies = {
+            policy.id: policy
+            for policy in self.session.scalars(select(Policy).where(Policy.id.in_(ids)))
+        }
+        source_rows = self.session.execute(
+            select(PolicyDiscovery.policy_id, PolicySource.name)
+            .join(PolicySource, PolicySource.id == PolicyDiscovery.source_id)
+            .where(PolicyDiscovery.policy_id.in_(ids))
+            .distinct()
+            .order_by(PolicySource.name)
+        ).all()
+        sources: dict[int, list[str]] = {policy_id: [] for policy_id in ids}
+        for policy_id, source_name in source_rows:
+            sources[policy_id].append(source_name)
+        items = [
+            PolicyListItem(
+                id=policies[policy_id].id,
+                title=policies[policy_id].title,
+                document_number=policies[policy_id].document_number,
+                published_on=policies[policy_id].published_on,
+                deadline_on=policies[policy_id].deadline_on,
+                current_conclusion=policies[policy_id].current_conclusion,
+                conclusion_confirmed=policies[policy_id].conclusion_confirmed,
+                sources=sources[policy_id],
+            )
+            for policy_id in ids
+        ]
+        return PolicyPage(items=items, page=page, page_size=page_size, total=total)
+
+    def source_options(self) -> list[SourceOption]:
+        return [
+            SourceOption(id=source.id, name=source.name)
+            for source in self.session.scalars(
+                select(PolicySource).order_by(PolicySource.name)
+            )
+        ]
+
+    def detail(self, policy_id: int) -> PolicyDetail:
+        policy = self.session.get(Policy, policy_id)
+        if policy is None or policy.current_version_id is None:
+            raise PolicyNotFound(f"policy {policy_id} was not found")
+        version = self.session.get(PolicyVersion, policy.current_version_id)
+        if version is None:
+            raise PolicyNotFound(f"policy {policy_id} has no current version")
+        discovery_rows = self.session.execute(
+            select(PolicyDiscovery, PolicySource.name, SourceChannel.name)
+            .join(PolicySource, PolicySource.id == PolicyDiscovery.source_id)
+            .join(SourceChannel, SourceChannel.id == PolicyDiscovery.channel_id)
+            .where(PolicyDiscovery.policy_id == policy_id)
+            .order_by(PolicyDiscovery.first_seen_at, PolicyDiscovery.id)
+        ).all()
+        attachments = list(
+            self.session.scalars(
+                select(PolicyAttachment)
+                .where(PolicyAttachment.policy_version_id == version.id)
+                .order_by(PolicyAttachment.id)
+            )
+        )
+        return PolicyDetail(
+            id=policy.id,
+            title=policy.title,
+            document_number=policy.document_number,
+            published_on=policy.published_on,
+            deadline_on=policy.deadline_on,
+            current_conclusion=policy.current_conclusion,
+            conclusion_confirmed=policy.conclusion_confirmed,
+            current_evaluation_batch_id=policy.current_evaluation_batch_id,
+            current_version=self._version_response(version),
+            discoveries=[
+                PolicyDiscoveryResponse(
+                    id=discovery.id,
+                    source_id=discovery.source_id,
+                    source_name=source_name,
+                    channel_id=discovery.channel_id,
+                    channel_name=channel_name,
+                    original_url=discovery.original_url,
+                    first_seen_at=discovery.first_seen_at,
+                    last_seen_at=discovery.last_seen_at,
+                )
+                for discovery, source_name, channel_name in discovery_rows
+            ],
+            attachments=[
+                PolicyAttachmentResponse(
+                    id=attachment.id,
+                    display_name=attachment.display_name,
+                    source_url=attachment.source_url,
+                    status=attachment.status,
+                    content_type=attachment.content_type,
+                    error_message=attachment.error_message,
+                    download_url=(
+                        f"/api/files/attachments/{attachment.id}"
+                        if attachment.status == "downloaded" and attachment.stored_path
+                        else None
+                    ),
+                )
+                for attachment in attachments
+            ],
+        )
+
+    def versions(self, policy_id: int) -> list[PolicyVersionResponse]:
+        if self.session.get(Policy, policy_id) is None:
+            raise PolicyNotFound(f"policy {policy_id} was not found")
+        return [
+            self._version_response(version)
+            for version in self.session.scalars(
+                select(PolicyVersion)
+                .where(PolicyVersion.policy_id == policy_id)
+                .order_by(PolicyVersion.version_number.desc(), PolicyVersion.id.desc())
+            )
+        ]
+
+    @staticmethod
+    def _version_response(version: PolicyVersion) -> PolicyVersionResponse:
+        return PolicyVersionResponse(
+            id=version.id,
+            version_number=version.version_number,
+            title=version.title,
+            body_text=version.body_text,
+            body_html=version.body_html,
+            collected_at=version.collected_at,
+            snapshot_url=f"/api/files/snapshots/{version.id}",
+        )
 
 
 class PolicyIngestionService:
