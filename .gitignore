@@ -12,6 +12,7 @@ __pycache__/
 htmlcov/
 .venv/
 node_modules/
+.pnpm-store/
 frontend/dist/
 playwright-report/
 test-results/
