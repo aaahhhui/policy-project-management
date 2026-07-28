@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sqlalchemy import select
+
 from app.modules.auth.models import User
 from app.modules.collection.models import CollectionTask, CollectionTaskItem
 import pytest
@@ -22,9 +24,17 @@ class FakeIngestionService:
     def ingest_and_mark_task_item(self, payload):
         if self.should_fail:
             raise RuntimeError("deliberately failed ingestion")
-        assert self.task_item is not None and self.session is not None
-        self.task_item.status = "succeeded"
-        self.task_item.policy_id = self.policy_id
+        assert self.session is not None
+        task_item = self.task_item or self.session.scalar(
+            select(CollectionTaskItem).where(
+                CollectionTaskItem.task_id == payload.task_id,
+                CollectionTaskItem.channel_id == payload.channel_id,
+                CollectionTaskItem.original_url == payload.original_url,
+            )
+        )
+        assert task_item is not None
+        task_item.status = "succeeded"
+        task_item.policy_id = self.policy_id
         self.session.commit()
         return IngestionResult(
             policy_id=self.policy_id, version_id=17, created_policy=True, created_version=True
@@ -108,16 +118,76 @@ def test_pipeline_marks_each_exact_task_item_success_or_failure_and_continues(db
     assert "deliberately failed ingestion" in (db.get(CollectionTaskItem, failed.id).error_message or "")
 
 
-def test_pipeline_returns_item_without_updating_an_arbitrary_row_when_exact_task_item_is_missing(db) -> None:
+def test_pipeline_creates_and_updates_exact_task_item_when_missing(db) -> None:
     task, channel, succeeded, _, policy = setup_task_items(db)
     pipeline = DatabaseIngestionPipeline(
-        lambda: db, service_factory=lambda session: FakeIngestionService(policy_id=policy.id)
+        lambda: db,
+        service_factory=lambda session: FakeIngestionService(
+            policy_id=policy.id, session=session
+        ),
     )
     pipeline.open_spider(None)
     unknown = item(task.id, channel.id, "https://example.test/missing")
 
     assert pipeline.process_item(unknown, None) == unknown
     assert db.get(CollectionTaskItem, succeeded.id).status == "pending"
+    created = db.scalar(
+        select(CollectionTaskItem).where(
+            CollectionTaskItem.task_id == task.id,
+            CollectionTaskItem.channel_id == channel.id,
+            CollectionTaskItem.original_url == unknown["original_url"],
+        )
+    )
+    assert created is not None
+    assert created.status == "succeeded"
+    assert created.policy_id == policy.id
+
+
+def test_pipeline_reuses_one_exact_task_item_for_duplicate_item(db) -> None:
+    task, channel, _, _, policy = setup_task_items(db)
+    pipeline = DatabaseIngestionPipeline(
+        lambda: db,
+        service_factory=lambda session: FakeIngestionService(
+            policy_id=policy.id, session=session
+        ),
+    )
+    pipeline.open_spider(None)
+    duplicate = item(task.id, channel.id, "https://example.test/duplicate")
+
+    pipeline.process_item(duplicate, None)
+    pipeline.process_item(duplicate, None)
+
+    matches = db.scalars(
+        select(CollectionTaskItem).where(
+            CollectionTaskItem.task_id == task.id,
+            CollectionTaskItem.channel_id == channel.id,
+            CollectionTaskItem.original_url == duplicate["original_url"],
+        )
+    ).all()
+    assert len(matches) == 1
+
+
+def test_pipeline_keeps_new_task_item_and_marks_it_failed_on_ingestion_error(db) -> None:
+    task, channel, _, _, _ = setup_task_items(db)
+    pipeline = DatabaseIngestionPipeline(
+        lambda: db,
+        service_factory=lambda session: FakeIngestionService(should_fail=True),
+    )
+    pipeline.open_spider(None)
+    failing = item(task.id, channel.id, "https://example.test/new-failure")
+
+    pipeline.process_item(failing, None)
+
+    created = db.scalar(
+        select(CollectionTaskItem).where(
+            CollectionTaskItem.task_id == task.id,
+            CollectionTaskItem.channel_id == channel.id,
+            CollectionTaskItem.original_url == failing["original_url"],
+        )
+    )
+    assert created is not None
+    assert created.status == "failed"
+    assert "deliberately failed ingestion" in (created.error_message or "")
 
 
 def test_pipeline_closes_owned_session() -> None:

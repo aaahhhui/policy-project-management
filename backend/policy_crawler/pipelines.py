@@ -51,6 +51,7 @@ class DatabaseIngestionPipeline:
         identity: tuple[int, int, str] | None = None
         try:
             identity = _task_identity(item)
+            self._ensure_task_item(session, identity)
             payload = _payload_from_item(item, identity)
             self._service_factory(session).ingest_and_mark_task_item(payload)
         except Exception as error:
@@ -60,6 +61,38 @@ class DatabaseIngestionPipeline:
             else:
                 self._mark_failed(session, identity, error, spider)
         return item
+
+    @staticmethod
+    def _ensure_task_item(
+        session: Session, identity: tuple[int, int, str]
+    ) -> CollectionTaskItem:
+        task_id, channel_id, original_url = identity
+        matches = session.scalars(
+            select(CollectionTaskItem)
+            .where(
+                CollectionTaskItem.task_id == task_id,
+                CollectionTaskItem.channel_id == channel_id,
+                CollectionTaskItem.original_url == original_url,
+            )
+            .limit(2)
+        ).all()
+        if len(matches) > 1:
+            raise TaskItemLookupError(
+                "expected at most one collection task item for "
+                f"task={task_id}, channel={channel_id}, url={original_url[:500]!r}; "
+                f"found {len(matches)}"
+            )
+        if matches:
+            return matches[0]
+
+        task_item = CollectionTaskItem(
+            task_id=task_id,
+            channel_id=channel_id,
+            original_url=original_url,
+        )
+        session.add(task_item)
+        session.commit()
+        return task_item
 
     def _mark_failed(
         self, session: Session, identity: tuple[int, int, str], error: Exception, spider: Any
