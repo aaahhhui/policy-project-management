@@ -5,6 +5,10 @@ import { getPolicy, getPolicyVersions } from "../../src/api/policies";
 import PolicyDetailView from "../../src/views/PolicyDetailView.vue";
 
 vi.mock("vue-router", () => ({ useRoute: () => ({ params: { id: "8" } }) }));
+vi.mock("../../src/api/evaluations", () => ({
+  getEvaluations: vi.fn().mockResolvedValue([]),
+  createEvaluation: vi.fn(),
+}));
 vi.mock("../../src/api/policies", () => ({
   getPolicy: vi.fn(),
   getPolicyVersions: vi.fn(),
