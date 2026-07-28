@@ -1,3 +1,4 @@
+import asyncio
 from datetime import date
 from pathlib import Path
 
@@ -45,6 +46,18 @@ def test_start_request_carries_configured_task_and_channel(gdii_spider: GdiiSpid
 
     assert request.url == NOTICE_URL
     assert request.meta == {"task_id": 17, "channel_id": 9}
+
+
+def test_async_start_carries_configured_task_and_channel(gdii_spider: GdiiSpider) -> None:
+    async def collect_start_requests() -> list[Request]:
+        return [request async for request in gdii_spider.start()]
+
+    requests = asyncio.run(collect_start_requests())
+
+    assert len(requests) == 1
+    assert requests[0].url == NOTICE_URL
+    assert requests[0].callback == gdii_spider.parse_list
+    assert requests[0].meta == {"task_id": 17, "channel_id": 9}
 
 
 def test_parse_list_includes_cutoff_boundary_undated_and_relative_urls(

@@ -1,5 +1,5 @@
 import re
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
 from datetime import date
 from pathlib import PurePosixPath
 from typing import Any
@@ -92,6 +92,9 @@ class GdiiSpider(Spider):
         return parsed
 
     def start_requests(self) -> Iterable[Request]:
+        yield Request(self.list_url, callback=self.parse_list, meta=self._request_meta())
+
+    async def start(self) -> AsyncIterator[Request]:
         yield Request(self.list_url, callback=self.parse_list, meta=self._request_meta())
 
     def parse_list(self, response: Response) -> Iterable[Request]:
