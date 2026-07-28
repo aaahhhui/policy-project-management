@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import re
 from collections.abc import Iterable
 from datetime import date
@@ -10,7 +12,7 @@ from scrapy import Request, Spider
 from scrapy.http import Response
 
 from policy_crawler.items import CollectedPolicyItem
-
+from policy_crawler.task_items import DatabaseTaskItemRecorder, NullTaskItemRecorder
 
 OFFICIAL_LIST_URLS = frozenset(
     {
@@ -65,6 +67,7 @@ class GdiiSpider(Spider):
         channel_id: str | None = None,
         list_url: str | None = None,
         cutoff_date: str | None = None,
+        task_item_recorder: DatabaseTaskItemRecorder | NullTaskItemRecorder | None = None,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -76,10 +79,17 @@ class GdiiSpider(Spider):
         self.list_url = list_url
         self._channel_directory = str(PurePosixPath(urlparse(list_url).path).parent)
         self._seen_list_urls = {list_url}
+        self._task_items = task_item_recorder or NullTaskItemRecorder()
         try:
             self.cutoff_date = date.fromisoformat(cutoff_date or "")
         except ValueError as error:
             raise ValueError("cutoff_date must be an ISO date (YYYY-MM-DD)") from error
+
+    @classmethod
+    def from_crawler(cls, crawler: Any, *args: Any, **kwargs: Any) -> GdiiSpider:
+        spider = super().from_crawler(crawler, *args, **kwargs)
+        spider._task_items = DatabaseTaskItemRecorder()
+        return spider
 
     @staticmethod
     def _parse_positive_id(value: str | None, name: str) -> int:
@@ -93,6 +103,10 @@ class GdiiSpider(Spider):
 
     def start_requests(self) -> Iterable[Request]:
         yield Request(self.list_url, callback=self.parse_list, meta=self._request_meta())
+
+    async def start(self) -> Any:
+        for request in self.start_requests():
+            yield request
 
     def parse_list(self, response: Response) -> Iterable[Request]:
         self._seen_list_urls.add(self._without_fragment(response.url))
@@ -112,7 +126,14 @@ class GdiiSpider(Spider):
                 parsed_dates.append(displayed_date)
                 if displayed_date < self.cutoff_date:
                     continue
-            yield response.follow(href, callback=self.parse_detail, meta=self._request_meta())
+            detail_url = response.urljoin(href)
+            self._task_items.discovered(self.task_id, self.channel_id, detail_url)
+            yield response.follow(
+                href,
+                callback=self.parse_detail,
+                errback=self.handle_detail_failure,
+                meta=self._request_meta(),
+            )
 
         oldest_date = min(parsed_dates, default=None)
         should_stop = oldest_date is not None and oldest_date < self.cutoff_date and not has_undated_entry
@@ -127,6 +148,17 @@ class GdiiSpider(Spider):
         if next_href and (next_url := self._safe_pagination_url(response, next_href)):
             self._seen_list_urls.add(next_url)
             yield Request(next_url, callback=self.parse_list, meta=self._request_meta())
+
+    def handle_detail_failure(self, failure: Any) -> tuple[()]:
+        value = failure.value
+        error = value if isinstance(value, Exception) else RuntimeError(str(value))
+        self._task_items.failed(
+            self.task_id,
+            self.channel_id,
+            failure.request.url,
+            error,
+        )
+        return ()
 
     def parse_detail(self, response: Response) -> Iterable[CollectedPolicyItem]:
         article = self._article_container(response)

@@ -112,7 +112,9 @@ def test_attachment_downloader_exposes_timeout() -> None:
 
     with pytest.raises(httpx.TimeoutException):
         HttpAttachmentDownloader(
-            client_factory=lambda: Client(), resolver=lambda host: ["8.8.8.8"]
+            client_factory=lambda: Client(),
+            resolver=lambda host: ["8.8.8.8"],
+            clock=lambda: 100.0,
         ).download("https://example.test/timeout.pdf")
     assert calls == [{"timeout": 20.0, "follow_redirects": False}]
 

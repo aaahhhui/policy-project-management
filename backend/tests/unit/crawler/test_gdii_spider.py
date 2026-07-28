@@ -6,7 +6,6 @@ from scrapy.http import HtmlResponse, Request
 
 from policy_crawler.spiders.gdii import GdiiSpider
 
-
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "gdii"
 NOTICE_URL = "https://gdii.gd.gov.cn/zwgk/tzgg1011/index.html"
 FUNDS_URL = "https://gdii.gd.gov.cn/xmzj1033/index.html"
@@ -47,6 +46,17 @@ def test_start_request_carries_configured_task_and_channel(gdii_spider: GdiiSpid
     assert request.meta == {"task_id": 17, "channel_id": 9}
 
 
+@pytest.mark.anyio
+async def test_async_start_carries_configured_task_and_channel(
+    gdii_spider: GdiiSpider,
+) -> None:
+    requests = [request async for request in gdii_spider.start()]
+
+    assert len(requests) == 1
+    assert requests[0].url == NOTICE_URL
+    assert requests[0].meta == {"task_id": 17, "channel_id": 9}
+
+
 def test_parse_list_includes_cutoff_boundary_undated_and_relative_urls(
     gdii_spider: GdiiSpider,
 ) -> None:
@@ -61,6 +71,73 @@ def test_parse_list_includes_cutoff_boundary_undated_and_relative_urls(
         "https://gdii.gd.gov.cn/zwgk/tzgg1011/undated-notice.html",
     ]
     assert all(request.meta == {"task_id": 17, "channel_id": 9} for request in detail_requests)
+
+
+def test_parse_list_records_candidates_before_requesting_details() -> None:
+    class Recorder:
+        def __init__(self) -> None:
+            self.discoveries: list[tuple[int, int, str]] = []
+
+        def discovered(self, task_id: int, channel_id: int, url: str) -> int:
+            self.discoveries.append((task_id, channel_id, url))
+            return len(self.discoveries)
+
+        def failed(
+            self, task_id: int, channel_id: int, url: str, error: Exception
+        ) -> None:
+            raise AssertionError("failure callback was not expected")
+
+    recorder = Recorder()
+    spider = GdiiSpider(
+        task_id="17",
+        channel_id="9",
+        list_url=NOTICE_URL,
+        cutoff_date="2026-07-15",
+        task_item_recorder=recorder,
+    )
+
+    requests = list(spider.parse_list(response_from_fixture("notices-list.html", NOTICE_URL)))
+    detail_requests = [request for request in requests if request.callback == spider.parse_detail]
+
+    assert recorder.discoveries == [
+        (17, 9, request.url) for request in detail_requests
+    ]
+    assert all(request.errback == spider.handle_detail_failure for request in detail_requests)
+
+
+def test_detail_request_failure_is_recorded_against_the_candidate() -> None:
+    class Recorder:
+        def __init__(self) -> None:
+            self.failure: tuple[int, int, str, str] | None = None
+
+        def discovered(self, task_id: int, channel_id: int, url: str) -> int:
+            return 1
+
+        def failed(
+            self, task_id: int, channel_id: int, url: str, error: Exception
+        ) -> None:
+            self.failure = (task_id, channel_id, url, str(error))
+
+    class Failure:
+        request = Request("https://gdii.gd.gov.cn/zwgk/tzgg1011/unavailable.html")
+        value = TimeoutError("detail timed out")
+
+    recorder = Recorder()
+    spider = GdiiSpider(
+        task_id="17",
+        channel_id="9",
+        list_url=NOTICE_URL,
+        cutoff_date="2026-07-15",
+        task_item_recorder=recorder,
+    )
+
+    assert list(spider.handle_detail_failure(Failure())) == []
+    assert recorder.failure == (
+        17,
+        9,
+        "https://gdii.gd.gov.cn/zwgk/tzgg1011/unavailable.html",
+        "detail timed out",
+    )
 
 
 def test_parse_list_continues_pagination_when_undated_entry_exists(gdii_spider: GdiiSpider) -> None:
