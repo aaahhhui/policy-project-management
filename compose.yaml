@@ -1,3 +1,23 @@
+x-worker-runtime: &worker-runtime
+  restart: unless-stopped
+  healthcheck:
+    test:
+      [
+        "CMD",
+        "python",
+        "-c",
+        "from pathlib import Path; import sys; sys.exit(0 if b'workers.' in Path('/proc/1/cmdline').read_bytes() else 1)",
+      ]
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 10s
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 services:
   mysql:
     image: mysql:8.4
@@ -26,6 +46,7 @@ services:
         condition: service_healthy
 
   collector:
+    <<: *worker-runtime
     build: ./backend
     command: python -m workers.collector
     env_file: .env
@@ -36,6 +57,7 @@ services:
         condition: service_healthy
 
   evaluator:
+    <<: *worker-runtime
     build: ./backend
     command: python -m workers.evaluator
     env_file: .env
@@ -44,6 +66,7 @@ services:
         condition: service_healthy
 
   scheduler:
+    <<: *worker-runtime
     build: ./backend
     command: python -m workers.scheduler
     env_file: .env

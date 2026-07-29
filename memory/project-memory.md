@@ -311,3 +311,22 @@
 - 规划提交：
   - `8f13ea1 docs: add stage 2 evaluation decision design`
   - `724aee1 docs: add stage 2 evaluation decision plan`
+
+## 18. 2026-07-29 第二阶段实现与验收状态
+
+- 第二阶段开发分支：`feature/stage2-evaluation-decision-loop`；隔离工作树：`C:\codex\testproduct\.worktrees\stage2-evaluation-decision-loop`。
+- 已实现评估规则草稿、发布、停用与不可变版本历史；仅申报负责人可写，已认证用户可读。
+- 评估批次固定快照一个已发布规则版本、政策版本和三家企业档案；三家结构化结果全部验证后才原子提交。
+- 已接入 DeepSeek OpenAI 兼容 API，保存模型、提示词版本、请求 ID、Token 与重试元数据；密钥仅从服务端环境注入。
+- AI 原始结果与人工最终结果分开保存。人工修改必须填写理由，确认记录不可变且支持等价重试幂等。
+- 已实现每条政策唯一当前主申报企业；首次选择、带理由切换、历史记录和审计事件均已覆盖。
+- 已完成规则管理页面、评估依据展示、人工确认表单、主申报企业选择及历史展示。
+- 数据库最新迁移为 `0002_evaluation_decision_loop`。
+- 真实 DeepSeek 虚构数据冒烟通过：模型 `deepseek-v4-flash`，输入 548 Token、输出 1717 Token、3 次重试；三企业结果、规则码、人工修改理由、确认、主企业切换、唯一当前记录和审计链均通过。
+- 最新本地验证：后端 203 passed、1 skipped；Ruff 通过；mypy 67 个源文件通过；前端 40 passed；Vue TypeScript 与 Vite 生产构建通过。
+- 密钥泄漏检查：Git 跟踪文件中真实密钥精确匹配 0；本轮未生成持久化应用日志，API 响应序列化契约测试通过。
+- Docker Desktop 位于用户级安装目录，未加入 Codex Shell PATH；已使用绝对路径完成 Compose 镜像构建和在线验证。
+- MySQL 8.4 上 `upgrade head → downgrade 0001_stage1_schema → upgrade head` 全部通过；MySQL、collector、evaluator、scheduler 为 healthy，API `/api/health` 返回 200。
+- Stage 1 Demo 占用宿主机 8080，Stage 2 web 通过不发布端口的临时容器验证 Nginx 内部 HTTP 响应；未停止或修改 Stage 1。
+- 容器日志中真实密钥和 Authorization 请求头均为 0 匹配。第二阶段验收状态：通过。
+- 本阶段明确延期：政策转项目、项目台账、企业微信通知、企业档案编辑及新增政策来源。
