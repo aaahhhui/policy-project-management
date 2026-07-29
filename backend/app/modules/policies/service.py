@@ -69,10 +69,14 @@ class PolicyQueryService:
 
         id_query = select(Policy.id).where(*filters)
         if source_id is not None:
-            id_query = id_query.join(PolicyDiscovery).where(
-                PolicyDiscovery.source_id == source_id
+            id_query = id_query.where(
+                select(PolicyDiscovery.id)
+                .where(
+                    PolicyDiscovery.policy_id == Policy.id,
+                    PolicyDiscovery.source_id == source_id,
+                )
+                .exists()
             )
-        id_query = id_query.distinct()
         total = int(
             self.session.scalar(
                 select(func.count()).select_from(id_query.subquery())
