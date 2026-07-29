@@ -7,6 +7,8 @@ import { getPolicy, getPolicyVersions, type PolicyDetail, type PolicyVersion } f
 import { currentUser } from "../auth/state";
 import EvaluationHistory from "../components/evaluations/EvaluationHistory.vue";
 import EvaluationSummary from "../components/evaluations/EvaluationSummary.vue";
+import EvaluationConfirmationForm from "../components/evaluations/EvaluationConfirmationForm.vue";
+import PrimaryEntitySelector from "../components/evaluations/PrimaryEntitySelector.vue";
 import AttachmentList from "../components/policies/AttachmentList.vue";
 import ConclusionBadge from "../components/policies/ConclusionBadge.vue";
 import VersionHistory from "../components/policies/VersionHistory.vue";
@@ -136,7 +138,18 @@ onMounted(async () => {
         <div><h2>正在加载评估记录…</h2><p>政策正文已可阅读，评估记录加载完成后将在这里显示。</p></div>
       </div>
       <template v-else-if="currentEvaluation">
-        <EvaluationSummary v-if="currentEvaluation.status === 'succeeded'" :evaluation="currentEvaluation" />
+        <EvaluationSummary v-if="['succeeded', 'awaiting_confirmation', 'confirmed'].includes(currentEvaluation.status)" :evaluation="currentEvaluation" />
+        <EvaluationConfirmationForm
+          v-if="canRetry && currentEvaluation.status === 'awaiting_confirmation'"
+          :evaluation="currentEvaluation"
+          @confirmed="refreshEvaluations(Number(route.params.id))"
+        />
+        <PrimaryEntitySelector
+          v-if="canRetry && currentEvaluation.status === 'confirmed' && policy"
+          :policy-id="policy.id"
+          :candidates="currentEvaluation.entities.map((entity) => ({ entity_seed_code: entity.entity_seed_code, label: String(currentEvaluation.profile_snapshot.find((profile) => profile.seed_code === entity.entity_seed_code)?.legal_name ?? entity.entity_seed_code) }))"
+          :current="null"
+        />
         <div v-else-if="['pending', 'running'].includes(currentEvaluation.status)" class="task-state" role="status">
           <span class="state-marker" aria-hidden="true"></span>
           <div><h2>评估中</h2><p>后台正在分析政策条件与三家经营主体档案，完成后将在这里显示结果。</p></div>
@@ -145,7 +158,7 @@ onMounted(async () => {
           <span class="state-marker" aria-hidden="true"></span>
           <div><h2>评估失败</h2><p>本次评估未生成有效结果。负责人可重新创建评估批次。</p></div>
         </div>
-        <div v-if="canRetry && ['succeeded', 'failed'].includes(currentEvaluation.status)" class="evaluation-actions">
+        <div v-if="canRetry && ['succeeded', 'awaiting_confirmation', 'confirmed', 'failed'].includes(currentEvaluation.status)" class="evaluation-actions">
           <button ref="retryButton" type="button" data-retry-evaluation @click="confirmRetryOpen = true">重新评估</button>
         </div>
         <EvaluationHistory :evaluations="historicalEvaluations" />

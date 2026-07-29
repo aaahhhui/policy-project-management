@@ -10,6 +10,8 @@ const statusLabels: Record<string, string> = {
   pending: "等待评估",
   running: "评估中",
   succeeded: "已完成",
+  awaiting_confirmation: "待负责人确认",
+  confirmed: "已确认",
   failed: "评估失败",
 };
 

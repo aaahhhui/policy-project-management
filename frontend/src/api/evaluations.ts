@@ -3,6 +3,9 @@ import http from "./http";
 export interface EntityEvaluation {
   entity_seed_code: string;
   match_level: "high" | "medium" | "low" | "uncertain";
+  score?: number;
+  hard_rule_results?: Array<Record<string, unknown>>;
+  weighted_rule_results?: Array<Record<string, unknown>>;
   evidence: string[];
   unmet_conditions: string[];
   risks: string[];
@@ -12,10 +15,16 @@ export interface EntityEvaluation {
 export interface EvaluationBatch {
   id: number;
   policy_version_id: number;
-  status: "pending" | "running" | "succeeded" | "failed";
+  status: "pending" | "running" | "succeeded" | "awaiting_confirmation" | "confirmed" | "failed";
   prompt_version: string;
   adapter_key: string;
   model_name: string | null;
+  rule_version_id?: number | null;
+  rule_snapshot?: Record<string, unknown> | null;
+  retry_count?: number;
+  provider_request_id?: string | null;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
   profile_snapshot: Array<Record<string, unknown>>;
   summary: string | null;
   key_conditions: string[] | null;
@@ -33,4 +42,34 @@ export async function getEvaluations(policyId: number): Promise<EvaluationBatch[
 
 export async function createEvaluation(policyId: number): Promise<EvaluationBatch> {
   return (await http.post<EvaluationBatch>(`/policies/${policyId}/evaluations`)).data;
+}
+
+export interface EvaluationConfirmationInput {
+  conclusion: NonNullable<EvaluationBatch["conclusion"]>;
+  summary: string;
+  key_conditions: string[];
+  entities: EntityEvaluation[];
+  change_reason: string | null;
+}
+
+export interface PrimaryEntityDecision {
+  entity_seed_code: string;
+  entity_legal_name: string;
+  reason?: string | null;
+  is_current?: boolean;
+}
+
+export async function confirmEvaluation(batchId: number, payload: EvaluationConfirmationInput) {
+  return (await http.post(`/evaluations/${batchId}/confirmation`, payload)).data;
+}
+
+export async function selectPrimaryEntity(
+  policyId: number,
+  payload: { entity_seed_code: string; reason: string | null },
+) {
+  return (await http.put(`/policies/${policyId}/primary-entity`, payload)).data;
+}
+
+export async function getPrimaryEntityHistory(policyId: number): Promise<PrimaryEntityDecision[]> {
+  return (await http.get<PrimaryEntityDecision[]>(`/policies/${policyId}/primary-entity-history`)).data;
 }

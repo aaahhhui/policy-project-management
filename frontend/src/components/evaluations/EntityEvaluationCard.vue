@@ -26,6 +26,8 @@ const matchLabels: Record<string, string> = {
       <span class="match-level">{{ matchLabels[props.evaluation.match_level] ?? props.evaluation.match_level }}</span>
     </header>
 
+    <p v-if="props.evaluation.score !== undefined" class="score">AI 综合评分 <strong>{{ props.evaluation.score }}</strong>/100</p>
+
     <div class="evidence-track">
       <section>
         <h4>匹配依据</h4>
@@ -54,6 +56,7 @@ header { display: flex; align-items: start; justify-content: space-between; gap:
 h3 { margin: 0; color: #183753; font: 700 1rem/1.45 "Noto Serif SC", "Songti SC", serif; }
 .match-level { flex: none; padding: .2rem .5rem; color: #365a77; border: 1px solid #b9cad8; background: #f4f8fb; font-size: .72rem; font-weight: 800; }
 .evidence-track { padding: .95rem 1rem; }
+.score { margin: 0; padding: .65rem 1rem; color: #526a86; background: #f7f9fb; font-size: .78rem; }.score strong { color: #174f7e; font-size: 1rem; }
 section + section { margin-top: .85rem; padding-top: .85rem; border-top: 1px dashed #dce5ed; }
 h4 { margin: 0 0 .38rem; color: #718397; font-size: .72rem; letter-spacing: .04em; }
 ul { margin: 0; padding-left: 1.05rem; color: #334b63; font-size: .84rem; line-height: 1.65; }
