@@ -29,6 +29,7 @@ describe("AppLayout", () => {
         { path: "/", component: AppLayout },
         { path: "/profile", component: { template: "<div />" } },
         { path: "/policies", component: { template: "<div />" } },
+        { path: "/evaluation-rules", component: { template: "<div />" } },
         { path: "/sources", component: { template: "<div />" } },
       ],
     });

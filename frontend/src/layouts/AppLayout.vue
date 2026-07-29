@@ -35,6 +35,7 @@ async function handleSignOut() {
       <nav class="app-nav" aria-label="主导航">
         <RouterLink to="/">工作台</RouterLink>
         <RouterLink to="/policies">政策中心</RouterLink>
+        <RouterLink to="/evaluation-rules">评估规则</RouterLink>
         <RouterLink v-if="canManageSources" to="/sources">政策来源</RouterLink>
         <RouterLink to="/profile">企业档案</RouterLink>
       </nav>

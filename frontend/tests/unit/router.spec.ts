@@ -35,6 +35,19 @@ describe("policy router", () => {
     expect(router.currentRoute.value.name).toBe("home");
   });
 
+  it("allows both owners and readers to view evaluation rules", async () => {
+    for (const user of [owner, reader]) {
+      const router = createPolicyRouter({
+        history: createMemoryHistory(),
+        loadCurrentUser: async () => user,
+      });
+
+      await router.push("/evaluation-rules");
+
+      expect(router.currentRoute.value.name).toBe("evaluation-rules");
+    }
+  });
+
   it("redirects only 401 session failures to login", async () => {
     const unauthorized = Object.assign(new Error("unauthorized"), { response: { status: 401 } });
     const router = createPolicyRouter({
