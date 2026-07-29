@@ -52,6 +52,41 @@ class EvaluationResult(BaseModel):
         return self
 
 
+class EntityConfirmationInput(EntityEvaluationResult):
+    pass
+
+
+class EvaluationConfirmationInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    conclusion: Literal["recommend_apply", "watch", "not_recommended", "uncertain"]
+    summary: str
+    key_conditions: list[str]
+    entities: list[EntityConfirmationInput]
+    change_reason: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_entities(self) -> Self:
+        codes = [item.entity_seed_code for item in self.entities]
+        if len(codes) != 3 or set(codes) != ENTITY_CODES:
+            raise ValueError("confirmation must contain exactly the three configured entities")
+        return self
+
+
+class EvaluationConfirmationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    batch_id: int
+    conclusion: str
+    summary: str
+    key_conditions: list[str]
+    entity_results: list[dict[str, Any]]
+    change_reason: str | None
+    confirmed_by: int
+    confirmed_at: datetime
+
+
 class EntityEvaluationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

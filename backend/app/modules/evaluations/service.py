@@ -10,8 +10,12 @@ from app.core.config import get_settings
 from app.modules.audit.service import AuditService
 from app.modules.evaluations.adapters.base import EvaluationAdapter
 from app.modules.evaluations.contracts import EvaluationProviderResult, EvaluationRequest
-from app.modules.evaluations.models import EntityEvaluation, EvaluationBatch
-from app.modules.evaluations.schemas import EvaluationResult
+from app.modules.evaluations.models import (
+    EntityEvaluation,
+    EvaluationBatch,
+    EvaluationConfirmation,
+)
+from app.modules.evaluations.schemas import EvaluationConfirmationInput, EvaluationResult
 from app.modules.policies.models import Policy, PolicyVersion
 from app.modules.profiles.models import BusinessEntity
 from app.modules.profiles.service import ENTITY_ORDER
@@ -305,6 +309,93 @@ class EvaluationService:
             raise ValueError(f"evaluation batch {batch_id} was not found")
         return completed
 
+    def confirm(
+        self,
+        batch_id: int,
+        payload: EvaluationConfirmationInput,
+        actor_id: int,
+    ) -> EvaluationConfirmation:
+        batch = self.db.scalar(
+            select(EvaluationBatch)
+            .where(EvaluationBatch.id == batch_id)
+            .with_for_update()
+        )
+        if batch is None:
+            raise EvaluationBatchNotFound
+
+        normalized = payload.model_dump(mode="json", exclude={"change_reason"})
+        existing = self.db.scalar(
+            select(EvaluationConfirmation).where(
+                EvaluationConfirmation.batch_id == batch_id
+            )
+        )
+        if existing is not None:
+            if self._confirmation_values(existing) == normalized:
+                return existing
+            raise ConfirmationConflict("evaluation batch is already confirmed")
+        if batch.status != "awaiting_confirmation" or batch.raw_response is None:
+            raise EvaluationNotAwaitingConfirmation
+
+        ai_values = {
+            "conclusion": batch.raw_response["conclusion"],
+            "summary": batch.raw_response["summary"],
+            "key_conditions": batch.raw_response["key_conditions"],
+            "entities": batch.raw_response["entities"],
+        }
+        changed = normalized != ai_values
+        reason = payload.change_reason.strip() if payload.change_reason else None
+        if changed and not reason:
+            raise ConfirmationReasonRequired
+
+        now = datetime.now(timezone.utc)
+        confirmation = EvaluationConfirmation(
+            batch_id=batch.id,
+            conclusion=payload.conclusion,
+            summary=payload.summary,
+            key_conditions=payload.key_conditions,
+            entity_results=[
+                item.model_dump(mode="json") for item in payload.entities
+            ],
+            change_reason=reason,
+            confirmed_by=actor_id,
+            confirmed_at=now,
+        )
+        self.db.add(confirmation)
+        batch.status = "confirmed"
+        batch.finished_at = now
+        version = self.db.get(PolicyVersion, batch.policy_version_id)
+        if version is None:
+            raise ValueError(f"policy version {batch.policy_version_id} was not found")
+        policy = self.db.scalar(
+            select(Policy).where(Policy.id == version.policy_id).with_for_update()
+        )
+        if policy is None:
+            raise ValueError(f"policy {version.policy_id} was not found")
+        policy.current_evaluation_batch_id = batch.id
+        policy.current_conclusion = payload.conclusion
+        policy.conclusion_confirmed = True
+        self.db.flush()
+        AuditService(self.db).record(
+            "evaluation_confirmed",
+            actor_id,
+            "evaluation_batch",
+            batch.id,
+            reason=reason,
+            changes={"ai_values_changed": changed},
+        )
+        return confirmation
+
+    @staticmethod
+    def _confirmation_values(
+        confirmation: EvaluationConfirmation,
+    ) -> dict[str, Any]:
+        return {
+            "conclusion": confirmation.conclusion,
+            "summary": confirmation.summary,
+            "key_conditions": confirmation.key_conditions,
+            "entities": confirmation.entity_results,
+        }
+
 
 class EvaluationPolicyNotFound(Exception):
     pass
@@ -315,4 +406,20 @@ class EvaluationClaimLost(Exception):
 
 
 class NoPublishedEvaluationRule(Exception):
+    pass
+
+
+class EvaluationBatchNotFound(Exception):
+    pass
+
+
+class EvaluationNotAwaitingConfirmation(Exception):
+    pass
+
+
+class ConfirmationReasonRequired(Exception):
+    pass
+
+
+class ConfirmationConflict(Exception):
     pass
