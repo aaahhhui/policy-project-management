@@ -1,6 +1,6 @@
 # 项目记忆：政府科创政策收集与项目申报管理系统
 
-> 更新日期：2026-07-27
+> 更新日期：2026-07-29
 > 用途：保存后续产品设计、实施计划和开发过程中必须持续遵循的已确认决策。  
 > 完整设计文档：[`docs/superpowers/specs/2026-07-23-policy-project-management-design.md`](../docs/superpowers/specs/2026-07-23-policy-project-management-design.md)
 
@@ -287,3 +287,27 @@
   - `3677063 fix: make policy listing compatible with mysql`
   - `534f2fd fix: make reevaluation dialog opaque`
 - 第一阶段功能已具备提交 PR 的条件；PR 合入前保持工作树，等待评审反馈，不清理 `feature/stage1-policy-ingestion-ai` 分支。
+
+## 17. 2026-07-29 下一阶段确认结论
+
+- 下一阶段优先闭合“政策评估决策”链路，不在本阶段继续扩展项目管理链路。
+- 已确认的业务流程为：`评估规则发布 → 真实 DeepSeek 多企业评估 → 负责人复核与确认 → 确定唯一主申报企业`。
+- 本阶段必须完成：
+  - 评估规则的草稿、发布、停用和不可变版本历史；已发布规则调整时创建新版本。
+  - 硬性条件、加权评分条件和权重校验；新评估固定引用一个规则版本及其快照。
+  - 接入真实 DeepSeek API，对北京、苏州、深圳三家经营主体分别生成结构化评估结果。
+  - 保存模型、提示词、规则版本、企业档案快照、请求标识、Token 用量和重试信息；API Key 不得进入数据库、前端或日志。
+  - DeepSeek 调用采用异步批次、严格 JSON 校验和有限重试；三家企业结果全部验证通过后才允许原子入库。
+  - AI 评估完成后进入待确认状态；负责人可接受或修改建议，修改时必须填写原因。
+  - AI 原始结果与人工最终结果分别保存；已确认批次不可编辑，重新评估必须生成新批次并保留历史。
+  - 只能从已确认批次的候选企业中确定一家主申报企业；切换主申报企业必须填写原因。
+  - 规则发布、评估、失败、人工确认、主申报企业选择及切换均保留审计记录。
+- 本阶段明确不实现：政策转项目、项目台账、企业微信通知、企业档案编辑、账号管理扩展和新增政策来源。
+- 本阶段验收必须包含后端/前端自动化测试、类型检查、生产构建、端到端测试，以及至少一次使用真实 API Key 的三企业评估冒烟测试和密钥泄漏检查。
+- 已确认设计文档：`docs/superpowers/specs/2026-07-29-stage-2-evaluation-decision-loop-design.md`。
+- 已确认实施计划：`docs/superpowers/plans/2026-07-29-stage-2-evaluation-decision-loop.md`。
+- 实施计划共 9 个任务，预计单名全栈工程师 11 个工作日；DeepSeek API Key 和可用余额需在第 4 个工作日前准备完成。
+- 规划分支：`docs/stage2-evaluation-decision-plan`。
+- 规划提交：
+  - `8f13ea1 docs: add stage 2 evaluation decision design`
+  - `724aee1 docs: add stage 2 evaluation decision plan`
