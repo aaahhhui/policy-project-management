@@ -1,9 +1,25 @@
 from datetime import datetime
 from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ENTITY_CODES = {"ENTITY-BEIJING", "ENTITY-SUZHOU", "ENTITY-SHENZHEN"}
+
+
+class HardRuleResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rule_code: str
+    passed: bool | None
+    evidence: str
+
+
+class WeightedRuleResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rule_code: str
+    score: int = Field(ge=0, le=100)
+    evidence: str
 
 
 class EntityEvaluationResult(BaseModel):
@@ -11,6 +27,9 @@ class EntityEvaluationResult(BaseModel):
 
     entity_seed_code: str
     match_level: Literal["high", "medium", "low", "uncertain"]
+    score: int = Field(ge=0, le=100)
+    hard_rule_results: list[HardRuleResult]
+    weighted_rule_results: list[WeightedRuleResult]
     evidence: list[str]
     unmet_conditions: list[str]
     risks: list[str]
@@ -38,6 +57,9 @@ class EntityEvaluationResponse(BaseModel):
 
     entity_seed_code: str
     match_level: str
+    score: int | None = None
+    hard_rule_results: list[dict[str, Any]] | None = None
+    weighted_rule_results: list[dict[str, Any]] | None = None
     evidence: list[str]
     unmet_conditions: list[str]
     risks: list[str]

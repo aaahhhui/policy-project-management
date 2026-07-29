@@ -15,7 +15,9 @@ class Settings(BaseSettings):
     collection_cron_minute: int = 0
     ai_adapter: str = "mock"
     deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_model: str = "deepseek-chat"
+    deepseek_model: str = "deepseek-v4-flash"
+    deepseek_timeout_seconds: int = 120
+    deepseek_max_retries: int = 3
     deepseek_api_key: str | None = None
 
 

@@ -25,6 +25,9 @@ class MockEvaluationAdapter:
                 EntityEvaluationResult(
                     entity_seed_code=seed_code,
                     match_level="uncertain" if is_candidate_shenzhen else "medium",
+                    score=50,
+                    hard_rule_results=[],
+                    weighted_rule_results=[],
                     evidence=[f"已读取 {profile['legal_name']} 的企业档案快照"],
                     unmet_conditions=[],
                     risks=["法人主体类型仍为候选状态"] if is_candidate_shenzhen else [],
