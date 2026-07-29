@@ -13,7 +13,7 @@ class AuditEvent(Base):
     __tablename__ = "audit_events"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    actor_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     action: Mapped[str] = mapped_column(String(64), nullable=False)
     object_type: Mapped[str] = mapped_column(String(64), nullable=False)
     object_id: Mapped[int] = mapped_column(Integer, nullable=False)

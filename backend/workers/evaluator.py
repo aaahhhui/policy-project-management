@@ -4,12 +4,18 @@ from typing import Any
 
 from app.db.session import SessionLocal
 from app.modules.evaluations.adapters.mock import MockEvaluationAdapter
+from app.modules.evaluations.adapters.deepseek import DeepSeekEvaluationAdapter
 from app.modules.evaluations.service import EvaluationService
+from app.core.config import get_settings
 
 
 def evaluation_adapter(adapter_key: str, model_name: str | None) -> Any:
     if adapter_key == "mock":
         return MockEvaluationAdapter()
+    if adapter_key == "deepseek":
+        return DeepSeekEvaluationAdapter.from_settings(
+            get_settings(), model_name=model_name
+        )
     raise ValueError(f"unsupported evaluation adapter: {adapter_key}")
 
 

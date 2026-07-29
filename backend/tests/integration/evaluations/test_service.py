@@ -3,8 +3,10 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import func, select
 
 from app.modules.evaluations.adapters.mock import MockEvaluationAdapter
+from app.modules.evaluations.contracts import EvaluationProviderResult
 from app.modules.evaluations.models import EntityEvaluation, EvaluationBatch
 from app.modules.evaluations.service import EvaluationService
+from app.modules.evaluation_rules.models import EvaluationRuleSet, EvaluationRuleVersion
 from app.modules.policies.contracts import CollectedPolicyPayload
 from app.modules.policies.models import Policy
 from app.modules.policies.service import PolicyIngestionService
@@ -22,6 +24,30 @@ class FakeFileStore:
 
 
 def seed_entities(db) -> list[BusinessEntity]:
+    rule_owner = User(
+        login_name="rule-owner", display_name="Rule owner", password_hash="x", is_active=True
+    )
+    db.add(rule_owner)
+    db.flush()
+    rule_set = EvaluationRuleSet(
+        name="Stage 2 rules", description=None, created_by=rule_owner.id
+    )
+    db.add(rule_set)
+    db.flush()
+    db.add(
+        EvaluationRuleVersion(
+            rule_set_id=rule_set.id,
+            version_number=1,
+            status="published",
+            hard_rules=[{"code": "REGION", "enabled": True}],
+            weighted_rules=[{"code": "TECH_MATCH", "weight": 100, "enabled": True}],
+            prompt_version="stage2-decision-v1",
+            created_by=rule_owner.id,
+            published_by=rule_owner.id,
+            published_at=datetime.now(timezone.utc),
+        )
+    )
+    db.flush()
     entities = [
         BusinessEntity(
             seed_code=code,
@@ -90,7 +116,10 @@ def test_new_policy_version_enqueues_one_batch_with_deep_entity_snapshot(db) -> 
     assert batch is not None
     assert batch.policy_version_id == result.version_id
     assert batch.status == "pending"
-    assert batch.prompt_version == "stage1-v1"
+    assert batch.prompt_version == "stage2-decision-v1"
+    assert batch.rule_version_id is not None
+    assert batch.rule_snapshot is not None
+    assert batch.rule_snapshot["weighted_rules"][0]["code"] == "TECH_MATCH"
     assert batch.adapter_key == "mock"
     assert batch.model_name is None
     assert [item["seed_code"] for item in batch.profile_snapshot] == [
@@ -123,7 +152,7 @@ def test_worker_claims_pending_batch_and_persists_validated_results(db) -> None:
     completed = EvaluationService(db).run_next(MockEvaluationAdapter())
 
     assert completed is not None
-    assert completed.status == "succeeded"
+    assert completed.status == "awaiting_confirmation"
     assert completed.started_at is not None
     assert completed.finished_at is not None
     assert completed.raw_response is not None
@@ -144,6 +173,36 @@ def test_worker_claims_pending_batch_and_persists_validated_results(db) -> None:
 class InvalidAdapter:
     def evaluate(self, request):
         return {"summary": "invalid", "entities": []}
+
+
+class MetadataAdapter:
+    def evaluate(self, request):
+        result = MockEvaluationAdapter().evaluate(request)
+        return EvaluationProviderResult(
+            result=result,
+            request_id="deepseek-request-17",
+            input_tokens=321,
+            output_tokens=87,
+            retry_count=2,
+        )
+
+
+def test_provider_metadata_and_scores_are_persisted_atomically(db) -> None:
+    seed_entities(db)
+    channel = seed_channel(db)
+    PolicyIngestionService(db, file_store=FakeFileStore()).ingest(payload(channel.id))
+
+    completed = EvaluationService(db).run_next(MetadataAdapter())
+
+    assert completed is not None
+    assert completed.status == "awaiting_confirmation"
+    assert completed.provider_request_id == "deepseek-request-17"
+    assert completed.input_tokens == 321
+    assert completed.output_tokens == 87
+    assert completed.retry_count == 2
+    rows = list(db.scalars(select(EntityEvaluation).where(EntityEvaluation.batch_id == completed.id)))
+    assert len(rows) == 3
+    assert all(row.score == 50 for row in rows)
 
 
 def test_first_failed_evaluation_is_isolated_and_keeps_pending_conclusion(db) -> None:
@@ -234,8 +293,8 @@ def test_older_batch_finishing_late_does_not_replace_newer_success(db) -> None:
     )
 
     policy = db.get(Policy, ingestion.policy_id)
-    assert completed_newer.status == "succeeded"
-    assert completed_older.status == "succeeded"
+    assert completed_newer.status == "awaiting_confirmation"
+    assert completed_older.status == "awaiting_confirmation"
     assert policy is not None
     assert policy.current_evaluation_batch_id == completed_newer.id
     assert policy.current_conclusion == completed_newer.conclusion
@@ -260,8 +319,8 @@ def test_reclaimed_batch_ignores_late_result_from_previous_claim(db) -> None:
     )
     late = service.process_claimed(first_claim.id, first_token, InvalidAdapter())
 
-    assert winner.status == "succeeded"
-    assert late.status == "succeeded"
+    assert winner.status == "awaiting_confirmation"
+    assert late.status == "awaiting_confirmation"
     assert late.id == winner.id
     assert late.error_message is None
     assert db.scalar(

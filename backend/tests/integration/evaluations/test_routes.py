@@ -3,6 +3,7 @@ from app.modules.auth.models import Role, User
 from app.modules.evaluations.adapters.mock import MockEvaluationAdapter
 from app.modules.evaluations.service import EvaluationService
 from app.modules.policies.service import PolicyIngestionService
+from app.modules.profiles.models import BusinessEntity
 
 from tests.integration.evaluations.test_service import (
     FakeFileStore,
@@ -37,7 +38,7 @@ def test_authenticated_user_can_list_evaluation_history_and_results(
     assert response.status_code == 200
     history = response.json()
     assert len(history) == 1
-    assert history[0]["status"] == "succeeded"
+    assert history[0]["status"] == "awaiting_confirmation"
     assert history[0]["conclusion"] is not None
     assert len(history[0]["entities"]) == 3
     assert all(item["evidence"] for item in history[0]["entities"])
@@ -59,7 +60,7 @@ def test_owner_re_evaluation_creates_new_pending_batch_without_mutating_history(
     assert created["status"] == "pending"
     history = client.get(f"/api/policies/{ingestion.policy_id}/evaluations").json()
     assert [item["id"] for item in history] == [created["id"], first.id]
-    assert history[1]["status"] == "succeeded"
+    assert history[1]["status"] == "awaiting_confirmation"
 
 
 def test_read_only_user_cannot_request_re_evaluation_but_can_read_history(
@@ -90,3 +91,30 @@ def test_evaluation_routes_require_login_and_return_not_found(
     login(client, "owner", seeded_owner_password)
     assert client.get("/api/policies/999/evaluations").status_code == 404
     assert client.post("/api/policies/999/evaluations").status_code == 404
+
+
+def test_owner_receives_conflict_when_no_rule_is_published(
+    client, db, seeded_owner, seeded_owner_password
+) -> None:
+    db.add_all(
+        [
+            BusinessEntity(
+                seed_code=code,
+                legal_name=code,
+                data={},
+                verification_status="verified",
+            )
+            for code in ("ENTITY-BEIJING", "ENTITY-SUZHOU", "ENTITY-SHENZHEN")
+        ]
+    )
+    db.flush()
+    channel = seed_channel(db)
+    ingestion = PolicyIngestionService(db, file_store=FakeFileStore()).ingest(
+        payload(channel.id)
+    )
+    login(client, "owner", seeded_owner_password)
+
+    response = client.post(f"/api/policies/{ingestion.policy_id}/evaluations")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "no_published_evaluation_rule"

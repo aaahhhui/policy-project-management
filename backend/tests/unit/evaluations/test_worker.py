@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
-from workers.evaluator import run_once
+from workers.evaluator import evaluation_adapter, run_once
+from app.modules.evaluations.adapters.deepseek import DeepSeekEvaluationAdapter
 
 
 class SessionContext:
@@ -74,3 +75,17 @@ def test_worker_marks_claimed_batch_failed_when_recorded_adapter_is_unsupported(
         service_factory=Service,
     ) is True
     assert calls == [(18, "claim-18", "unsupported removed-adapter/old-model")]
+
+
+def test_worker_constructs_deepseek_adapter_from_recorded_model(monkeypatch) -> None:
+    selected = object()
+    calls = []
+
+    def from_settings(settings, *, model_name):
+        calls.append((settings.deepseek_base_url, model_name))
+        return selected
+
+    monkeypatch.setattr(DeepSeekEvaluationAdapter, "from_settings", from_settings)
+
+    assert evaluation_adapter("deepseek", "recorded-model") is selected
+    assert calls == [("https://api.deepseek.com", "recorded-model")]

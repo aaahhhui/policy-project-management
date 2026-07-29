@@ -7,20 +7,22 @@ from sqlalchemy import case, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.modules.audit.service import AuditService
 from app.modules.evaluations.adapters.base import EvaluationAdapter
-from app.modules.evaluations.contracts import EvaluationRequest
+from app.modules.evaluations.contracts import EvaluationProviderResult, EvaluationRequest
 from app.modules.evaluations.models import EntityEvaluation, EvaluationBatch
 from app.modules.evaluations.schemas import EvaluationResult
 from app.modules.policies.models import Policy, PolicyVersion
 from app.modules.profiles.models import BusinessEntity
 from app.modules.profiles.service import ENTITY_ORDER
+from app.modules.evaluation_rules.service import EvaluationRuleService, RuleNotFound
 
 
 class EvaluationService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def enqueue(self, policy_version_id: int) -> EvaluationBatch:
+    def enqueue(self, policy_version_id: int, actor_id: int | None = None) -> EvaluationBatch:
         entities = list(
             self.db.scalars(
                 select(BusinessEntity)
@@ -35,11 +37,28 @@ class EvaluationService:
         )
         if [entity.seed_code for entity in entities] != list(ENTITY_ORDER):
             raise ValueError("evaluation requires exactly the three configured entities")
+        try:
+            rule_version = EvaluationRuleService(self.db).get_active_version()
+        except RuleNotFound as error:
+            raise NoPublishedEvaluationRule from error
+        rule_snapshot = deepcopy(
+            {
+                "id": rule_version.id,
+                "rule_set_id": rule_version.rule_set_id,
+                "version_number": rule_version.version_number,
+                "status": rule_version.status,
+                "hard_rules": rule_version.hard_rules,
+                "weighted_rules": rule_version.weighted_rules,
+                "prompt_version": rule_version.prompt_version,
+            }
+        )
         settings = get_settings()
         batch = EvaluationBatch(
             policy_version_id=policy_version_id,
+            rule_version_id=rule_version.id,
+            rule_snapshot=rule_snapshot,
             status="pending",
-            prompt_version="stage1-v1",
+            prompt_version=rule_version.prompt_version,
             adapter_key=settings.ai_adapter,
             model_name=None if settings.ai_adapter == "mock" else settings.deepseek_model,
             profile_snapshot=deepcopy(
@@ -56,13 +75,18 @@ class EvaluationService:
         )
         self.db.add(batch)
         self.db.flush()
+        AuditService(self.db).record(
+            "evaluation_started", actor_id, "evaluation_batch", batch.id
+        )
         return batch
 
-    def enqueue_for_policy(self, policy_id: int) -> EvaluationBatch:
+    def enqueue_for_policy(
+        self, policy_id: int, actor_id: int | None = None
+    ) -> EvaluationBatch:
         policy = self.db.get(Policy, policy_id)
         if policy is None or policy.current_version_id is None:
             raise EvaluationPolicyNotFound
-        return self.enqueue(policy.current_version_id)
+        return self.enqueue(policy.current_version_id, actor_id)
 
     def history(self, policy_id: int) -> list[dict[str, Any]]:
         if self.db.get(Policy, policy_id) is None:
@@ -89,10 +113,16 @@ class EvaluationService:
             {
                 "id": batch.id,
                 "policy_version_id": batch.policy_version_id,
+                "rule_version_id": batch.rule_version_id,
+                "rule_snapshot": batch.rule_snapshot,
                 "status": batch.status,
                 "prompt_version": batch.prompt_version,
                 "adapter_key": batch.adapter_key,
                 "model_name": batch.model_name,
+                "retry_count": batch.retry_count,
+                "provider_request_id": batch.provider_request_id,
+                "input_tokens": batch.input_tokens,
+                "output_tokens": batch.output_tokens,
                 "profile_snapshot": batch.profile_snapshot,
                 "summary": batch.summary,
                 "key_conditions": batch.key_conditions,
@@ -162,8 +192,16 @@ class EvaluationService:
                 title=version.title,
                 body_text=version.body_text,
                 profile_snapshot=batch.profile_snapshot,
+                rule_version_id=batch.rule_version_id,
+                rule_snapshot=batch.rule_snapshot or {},
             )
-            result = EvaluationResult.model_validate(adapter.evaluate(request))
+            adapter_result = adapter.evaluate(request)
+            if isinstance(adapter_result, EvaluationProviderResult):
+                provider_result = adapter_result
+                result = provider_result.result
+            else:
+                provider_result = None
+                result = EvaluationResult.model_validate(adapter_result)
             if self.db.in_transaction():
                 self.db.rollback()
             with self.db.begin():
@@ -186,6 +224,15 @@ class EvaluationService:
                             batch_id=current_batch.id,
                             entity_seed_code=entity.entity_seed_code,
                             match_level=entity.match_level,
+                            score=entity.score,
+                            hard_rule_results=[
+                                item.model_dump(mode="json")
+                                for item in entity.hard_rule_results
+                            ],
+                            weighted_rule_results=[
+                                item.model_dump(mode="json")
+                                for item in entity.weighted_rule_results
+                            ],
                             evidence=entity.evidence,
                             unmet_conditions=entity.unmet_conditions,
                             risks=entity.risks,
@@ -196,7 +243,12 @@ class EvaluationService:
                 current_batch.key_conditions = result.key_conditions
                 current_batch.conclusion = result.conclusion
                 current_batch.raw_response = result.model_dump(mode="json")
-                current_batch.status = "succeeded"
+                if provider_result is not None:
+                    current_batch.provider_request_id = provider_result.request_id
+                    current_batch.input_tokens = provider_result.input_tokens
+                    current_batch.output_tokens = provider_result.output_tokens
+                    current_batch.retry_count = provider_result.retry_count
+                current_batch.status = "awaiting_confirmation"
                 current_batch.finished_at = datetime.now(timezone.utc)
                 policy = self.db.scalar(
                     select(Policy)
@@ -241,6 +293,13 @@ class EvaluationService:
                 failed_batch.status = "failed"
                 failed_batch.error_message = (str(error) or error.__class__.__name__)[:1000]
                 failed_batch.finished_at = datetime.now(timezone.utc)
+                AuditService(self.db).record(
+                    "evaluation_failed",
+                    None,
+                    "evaluation_batch",
+                    failed_batch.id,
+                    changes={"error_code": failed_batch.error_message},
+                )
         completed = self.db.get(EvaluationBatch, batch_id)
         if completed is None:
             raise ValueError(f"evaluation batch {batch_id} was not found")
@@ -252,4 +311,8 @@ class EvaluationPolicyNotFound(Exception):
 
 
 class EvaluationClaimLost(Exception):
+    pass
+
+
+class NoPublishedEvaluationRule(Exception):
     pass

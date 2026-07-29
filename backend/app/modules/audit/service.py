@@ -12,7 +12,7 @@ class AuditService:
     def record(
         self,
         action: str,
-        actor_id: int,
+        actor_id: int | None,
         object_type: str,
         object_id: int,
         reason: str | None = None,

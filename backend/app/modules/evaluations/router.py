@@ -7,7 +7,11 @@ from app.db.session import get_db
 from app.modules.auth.dependencies import get_current_user, require_role
 from app.modules.auth.models import User
 from app.modules.evaluations.schemas import EvaluationBatchResponse
-from app.modules.evaluations.service import EvaluationPolicyNotFound, EvaluationService
+from app.modules.evaluations.service import (
+    EvaluationPolicyNotFound,
+    EvaluationService,
+    NoPublishedEvaluationRule,
+)
 
 router = APIRouter(tags=["evaluations"])
 AuthenticatedUser = Annotated[User, Depends(get_current_user)]
@@ -31,11 +35,16 @@ def evaluation_history(
     response_model=EvaluationBatchResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def create_evaluation(policy_id: int, _: Owner, db: Session = Depends(get_db)):
+def create_evaluation(policy_id: int, user: Owner, db: Session = Depends(get_db)):
     service = EvaluationService(db)
     try:
-        service.enqueue_for_policy(policy_id)
+        service.enqueue_for_policy(policy_id, user.id)
         db.commit()
         return service.history(policy_id)[0]
     except EvaluationPolicyNotFound as error:
         raise HTTPException(status_code=404, detail="Policy not found") from error
+    except NoPublishedEvaluationRule as error:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "no_published_evaluation_rule"},
+        ) from error

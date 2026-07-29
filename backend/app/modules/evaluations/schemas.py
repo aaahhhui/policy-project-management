@@ -71,10 +71,16 @@ class EvaluationBatchResponse(BaseModel):
 
     id: int
     policy_version_id: int
+    rule_version_id: int | None
+    rule_snapshot: dict[str, Any] | None
     status: str
     prompt_version: str
     adapter_key: str
     model_name: str | None
+    retry_count: int
+    provider_request_id: str | None
+    input_tokens: int | None
+    output_tokens: int | None
     profile_snapshot: list[dict[str, Any]]
     summary: str | None
     key_conditions: list[str] | None

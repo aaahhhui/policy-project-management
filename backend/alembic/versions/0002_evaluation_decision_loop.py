@@ -168,7 +168,7 @@ def upgrade() -> None:
     op.create_table(
         "audit_events",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("actor_id", sa.Integer(), sa.ForeignKey("users.id"), nullable=False),
+        sa.Column("actor_id", sa.Integer(), sa.ForeignKey("users.id"), nullable=True),
         sa.Column("action", sa.String(length=64), nullable=False),
         sa.Column("object_type", sa.String(length=64), nullable=False),
         sa.Column("object_id", sa.Integer(), nullable=False),
