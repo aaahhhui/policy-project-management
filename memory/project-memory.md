@@ -1,6 +1,6 @@
 # 项目记忆：政府科创政策收集与项目申报管理系统
 
-> 更新日期：2026-07-23  
+> 更新日期：2026-07-27
 > 用途：保存后续产品设计、实施计划和开发过程中必须持续遵循的已确认决策。  
 > 完整设计文档：[`docs/superpowers/specs/2026-07-23-policy-project-management-design.md`](../docs/superpowers/specs/2026-07-23-policy-project-management-design.md)
 
@@ -239,5 +239,51 @@
 - 产品路线图已确认。
 - MVP 页面原型已逐页确认。
 - 产品、权限、数据、技术架构、部署和验收标准已确认并存档。
-- 当前尚未开始开发实现。
-- 下一步应在用户明确指令后编写实施计划，再开始代码开发和上线工作。
+- 第一阶段实施计划已存档：`docs/superpowers/plans/2026-07-23-stage-1-policy-ingestion-ai.md`。
+- 当前开发分支为 `feature/stage1-policy-ingestion-ai`，隔离工作树为
+  `C:\codex\testproduct\.worktrees\stage1-policy-ingestion-ai`；不要在 `main` 上重复实现或覆盖该工作树。
+- 实施计划 Task 1—9 已完成并提交，已经具备：
+  - Docker Compose 应用骨架、数据库模型与迁移。
+  - 账号密码登录、申报负责人/只读用户权限控制。
+  - 三经营主体只读企业档案。
+  - 政策来源管理与广东省工信厅双栏目适配器。
+  - 政策快照、附件、去重、版本与发现记录的事务化入库。
+  - 入库并发锁、SSRF 防护、附件大小/超时/重定向限制、原子文件写入和任务条目一致性加固。
+  - 手动与每日定时采集任务、原子任务抢占、采集 worker、任务结果统计及来源页三秒轮询。
+  - 政策列表的关键词、来源、发布日期筛选和数据库分页，未知发布日期稳定排在末尾。
+  - 政策详情、当前版本、全部来源发现、附件状态和版本历史的连续阅读页面。
+  - 原始网页快照与附件的登录鉴权下载，以及 `file_storage_root` 路径越界防护。
+  - 政策中心与详情路由；所有内部用户均可查看，政策来源管理仍仅限申报负责人。
+- 最近关键提交：
+  - `ca87956 feat: ingest policies with traceable versions`
+  - `a77034a fix: harden policy ingestion safety`
+  - `b6d7fbf feat: orchestrate manual and scheduled collection`
+  - `2dc7486 feat: add policy center and traceable details`
+- Task 9 提交前的最新验证结果：后端 151 项测试、前端 27 项测试全部通过；Ruff 0.9.10、mypy、TypeScript 检查和 Vite 生产构建通过。
+- Vite 构建当前仍提示第三方 `@vueuse/core` PURE 注释位置和主包超过 500 kB；不影响构建产物，但后续可通过路由懒加载和分包降低首屏体积。
+- Ruff 当前声明范围为 `>=0.9,<1`，但 0.16.0 会启用与基线不同的检查行为；恢复验证时使用了 0.9.10。后续应考虑在依赖配置中锁定工具版本，避免验证漂移。
+- 当前 Codex 会话 PATH 中没有 Docker；本轮使用工作树内 `backend/.venv` 和 Codex bundled Node.js 完成本地验证。需要进行 MySQL、Compose 或真实服务联调时，必须在可用的 Docker 环境重新验证。
+- 实施计划 Task 10—12 已完成：严格评估契约、确定性 mock AI 适配器、三经营主体档案快照、异步评估 worker、历史批次、负责人重新评估，以及第一阶段验收与真实采样均已实现。
+
+## 16. 2026-07-29 Demo 验证基线
+
+- Docker Desktop 已安装并可用；Demo 通过 Docker Compose 在 `http://localhost:8080` 运行。登录凭据仅保存在本地 `.env`，不得写入版本库或项目记忆。
+- Compose 当前包含 `mysql`、`api`、`collector`、`evaluator`、`scheduler`、`web` 六个服务；MySQL 健康检查和 `/api/health` 均通过。
+- 广东省工业和信息化厅真实采样任务 #8 已自动完成：发现 23 条、成功 23 条、失败 0 条；跨渠道去重后政策中心展示 19 条政策。
+- 采集链路已修复并验证：
+  - collector 按来源下全部启用渠道逐一启动 Scrapy，并传递完整渠道参数；
+  - 兼容 Scrapy 2.17 的异步 `start()`；
+  - pipeline 在入库前创建并复用唯一采集任务明细，入库失败时保留失败状态；
+  - 领取任务、运行爬虫和结果汇总使用隔离数据库会话；collector 显式注册政策模型，避免外键元数据解析失败；
+  - Docker 构建增加 pip 下载超时和重试，构建上下文排除本地缓存与依赖目录。
+- 政策中心 MySQL 查询已改为 `EXISTS` 来源筛选，避免 `DISTINCT` 与未选中排序字段组合触发 MySQL 3065；真实接口返回 200，政策列表页面已在浏览器验证。
+- 负责人“重新评估”确认弹窗已设置不透明白色背景；浏览器计算样式和截图确认底层内容不再透出或重叠。
+- 当前验证基线：后端 180 项测试通过，Ruff 通过；前端 35 项测试通过，TypeScript 检查和 Vite 生产构建通过。
+- Vite 仍提示第三方 `@vueuse/core` PURE 注释位置和主包超过 500 kB；不影响本次构建及 Demo 验收，后续可通过路由懒加载和手动分包优化。
+- 本轮关键提交：
+  - `96d9991 fix: run collection tasks per enabled channel`
+  - `0d9b496 fix: start gdii spider on current scrapy`
+  - `03375e2 fix: complete real collection task ingestion`
+  - `3677063 fix: make policy listing compatible with mysql`
+  - `534f2fd fix: make reevaluation dialog opaque`
+- 第一阶段功能已具备提交 PR 的条件；PR 合入前保持工作树，等待评审反馈，不清理 `feature/stage1-policy-ingestion-ai` 分支。
