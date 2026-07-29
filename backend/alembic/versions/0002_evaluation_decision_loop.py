@@ -125,19 +125,15 @@ def upgrade() -> None:
         *_timestamp_columns(),
     )
 
-    current_policy_column: sa.Column[object]
-    if op.get_bind().dialect.name == "mysql":
-        current_policy_column = sa.Column(
-            "current_policy_id",
-            sa.Integer(),
-            sa.Computed(
-                "CASE WHEN superseded_at IS NULL THEN policy_id ELSE NULL END",
-                persisted=True,
-            ),
-            nullable=True,
-        )
-    else:
-        current_policy_column = sa.Column("current_policy_id", sa.Integer(), nullable=True)
+    current_policy_column = sa.Column(
+        "current_policy_id",
+        sa.Integer(),
+        sa.Computed(
+            "CASE WHEN superseded_at IS NULL THEN policy_id ELSE NULL END",
+            persisted=True,
+        ),
+        nullable=True,
+    )
 
     op.create_table(
         "primary_entity_decisions",

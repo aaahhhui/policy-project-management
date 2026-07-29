@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Enum, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Computed, Enum, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin
@@ -127,4 +127,11 @@ class PrimaryEntityDecision(Base, TimestampMixin):
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     selected_at: Mapped[datetime] = mapped_column(nullable=False)
     superseded_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    current_policy_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    current_policy_id: Mapped[int | None] = mapped_column(
+        Integer,
+        Computed(
+            "CASE WHEN superseded_at IS NULL THEN policy_id ELSE NULL END",
+            persisted=True,
+        ),
+        nullable=True,
+    )

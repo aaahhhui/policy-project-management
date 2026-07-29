@@ -87,6 +87,25 @@ class EvaluationConfirmationResponse(BaseModel):
     confirmed_at: datetime
 
 
+class PrimaryEntityInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    entity_seed_code: str
+    reason: str | None = Field(default=None, max_length=2000)
+
+
+class PrimaryEntityDecisionResponse(BaseModel):
+    id: int
+    policy_id: int
+    batch_id: int
+    entity_seed_code: str
+    entity_legal_name: str
+    selected_by: int
+    selected_at: datetime
+    reason: str | None
+    is_current: bool
+
+
 class EntityEvaluationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

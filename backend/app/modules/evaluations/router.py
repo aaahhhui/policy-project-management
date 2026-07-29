@@ -10,6 +10,8 @@ from app.modules.evaluations.schemas import (
     EvaluationBatchResponse,
     EvaluationConfirmationInput,
     EvaluationConfirmationResponse,
+    PrimaryEntityDecisionResponse,
+    PrimaryEntityInput,
 )
 from app.modules.evaluations.service import (
     EvaluationPolicyNotFound,
@@ -19,6 +21,9 @@ from app.modules.evaluations.service import (
     ConfirmationReasonRequired,
     EvaluationBatchNotFound,
     EvaluationNotAwaitingConfirmation,
+    EvaluationNotConfirmed,
+    PrimaryEntityNotEligible,
+    PrimaryEntityReasonRequired,
 )
 
 router = APIRouter(tags=["evaluations"])
@@ -82,3 +87,41 @@ def confirm_evaluation(
         raise HTTPException(
             status_code=409, detail={"code": "evaluation_confirmation_conflict"}
         ) from error
+
+
+@router.get(
+    "/api/policies/{policy_id}/primary-entity-history",
+    response_model=list[PrimaryEntityDecisionResponse],
+)
+def primary_entity_history(
+    policy_id: int, _: AuthenticatedUser, db: Session = Depends(get_db)
+) -> list[dict[str, object]]:
+    try:
+        return EvaluationService(db).primary_entity_history(policy_id)
+    except EvaluationPolicyNotFound as error:
+        raise HTTPException(status_code=404, detail="Policy not found") from error
+
+
+@router.put(
+    "/api/policies/{policy_id}/primary-entity",
+    response_model=PrimaryEntityDecisionResponse,
+)
+def select_primary_entity(
+    policy_id: int,
+    payload: PrimaryEntityInput,
+    user: Owner,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    service = EvaluationService(db)
+    try:
+        service.select_primary_entity(policy_id, payload, user.id)
+        db.commit()
+        return service.primary_entity_history(policy_id)[0]
+    except EvaluationPolicyNotFound as error:
+        raise HTTPException(status_code=404, detail="Policy not found") from error
+    except EvaluationNotConfirmed as error:
+        raise HTTPException(status_code=409, detail={"code": "evaluation_not_confirmed"}) from error
+    except PrimaryEntityNotEligible as error:
+        raise HTTPException(status_code=422, detail={"code": "primary_entity_not_eligible"}) from error
+    except PrimaryEntityReasonRequired as error:
+        raise HTTPException(status_code=422, detail={"code": "primary_entity_reason_required"}) from error

@@ -14,8 +14,13 @@ from app.modules.evaluations.models import (
     EntityEvaluation,
     EvaluationBatch,
     EvaluationConfirmation,
+    PrimaryEntityDecision,
 )
-from app.modules.evaluations.schemas import EvaluationConfirmationInput, EvaluationResult
+from app.modules.evaluations.schemas import (
+    EvaluationConfirmationInput,
+    EvaluationResult,
+    PrimaryEntityInput,
+)
 from app.modules.policies.models import Policy, PolicyVersion
 from app.modules.profiles.models import BusinessEntity
 from app.modules.profiles.service import ENTITY_ORDER
@@ -396,6 +401,110 @@ class EvaluationService:
             "entities": confirmation.entity_results,
         }
 
+    def select_primary_entity(
+        self, policy_id: int, payload: PrimaryEntityInput, actor_id: int
+    ) -> PrimaryEntityDecision:
+        policy = self.db.scalar(
+            select(Policy).where(Policy.id == policy_id).with_for_update()
+        )
+        if policy is None:
+            raise EvaluationPolicyNotFound
+        if policy.current_evaluation_batch_id is None:
+            raise EvaluationNotConfirmed
+        batch = self.db.scalar(
+            select(EvaluationBatch)
+            .where(EvaluationBatch.id == policy.current_evaluation_batch_id)
+            .with_for_update()
+        )
+        if batch is None or batch.status != "confirmed":
+            raise EvaluationNotConfirmed
+        confirmation = self.db.scalar(
+            select(EvaluationConfirmation).where(
+                EvaluationConfirmation.batch_id == batch.id
+            )
+        )
+        if confirmation is None:
+            raise EvaluationNotConfirmed
+        candidate = next(
+            (
+                item
+                for item in confirmation.entity_results
+                if item["entity_seed_code"] == payload.entity_seed_code
+            ),
+            None,
+        )
+        if candidate is None:
+            raise PrimaryEntityNotEligible
+
+        current = self.db.scalar(
+            select(PrimaryEntityDecision)
+            .where(PrimaryEntityDecision.current_policy_id == policy_id)
+            .with_for_update()
+        )
+        if current is not None and current.entity_seed_code == payload.entity_seed_code:
+            return current
+        reason = payload.reason.strip() if payload.reason else None
+        if current is not None and not reason:
+            raise PrimaryEntityReasonRequired
+
+        now = datetime.now(timezone.utc)
+        action = "primary_entity_selected"
+        if current is not None:
+            current.superseded_at = now
+            self.db.flush()
+            action = "primary_entity_changed"
+
+        profile = next(
+            item
+            for item in batch.profile_snapshot
+            if item["seed_code"] == payload.entity_seed_code
+        )
+        decision = PrimaryEntityDecision(
+            policy_id=policy_id,
+            batch_id=batch.id,
+            entity_seed_code=payload.entity_seed_code,
+            entity_legal_name=str(profile["legal_name"]),
+            selected_by=actor_id,
+            reason=reason,
+            selected_at=now,
+        )
+        self.db.add(decision)
+        self.db.flush()
+        AuditService(self.db).record(
+            action,
+            actor_id,
+            "primary_entity_decision",
+            decision.id,
+            reason=reason,
+            changes={"policy_id": policy_id, "entity_seed_code": payload.entity_seed_code},
+        )
+        return decision
+
+    def primary_entity_history(self, policy_id: int) -> list[dict[str, Any]]:
+        if self.db.get(Policy, policy_id) is None:
+            raise EvaluationPolicyNotFound
+        rows = list(
+            self.db.scalars(
+                select(PrimaryEntityDecision)
+                .where(PrimaryEntityDecision.policy_id == policy_id)
+                .order_by(PrimaryEntityDecision.selected_at.desc(), PrimaryEntityDecision.id.desc())
+            )
+        )
+        return [
+            {
+                "id": row.id,
+                "policy_id": row.policy_id,
+                "batch_id": row.batch_id,
+                "entity_seed_code": row.entity_seed_code,
+                "entity_legal_name": row.entity_legal_name,
+                "selected_by": row.selected_by,
+                "selected_at": row.selected_at,
+                "reason": row.reason,
+                "is_current": row.superseded_at is None,
+            }
+            for row in rows
+        ]
+
 
 class EvaluationPolicyNotFound(Exception):
     pass
@@ -422,4 +531,16 @@ class ConfirmationReasonRequired(Exception):
 
 
 class ConfirmationConflict(Exception):
+    pass
+
+
+class EvaluationNotConfirmed(Exception):
+    pass
+
+
+class PrimaryEntityNotEligible(Exception):
+    pass
+
+
+class PrimaryEntityReasonRequired(Exception):
     pass
