@@ -51,3 +51,11 @@ Docker Desktop 安装在用户级目录，未加入当前 Codex Shell PATH；验
 Stage 1 Demo 正占用宿主机 8080，因此未同时发布 Stage 2 web 的宿主端口；Stage 2 web 镜像已完成生产构建，并通过不发布端口的临时容器验证 Nginx 内部 HTTP 响应，随后删除临时容器。Stage 1 未被停止或修改。
 
 结论：第二阶段业务闭环、真实 DeepSeek 调用、自动化回归、Docker 构建、MySQL 在线迁移、服务健康和密钥泄漏检查全部通过。
+
+## 2026-07-29 本地 8081 发布验收
+
+- 入口：`http://localhost:8081`（`WEB_PORT=8081`）。启动前确认 Stage 1 的 web 容器发布 `0.0.0.0:8080->80/tcp`，且 8081 没有现有 TCP 监听者；未停止或修改 Stage 1。
+- 发布：在 Stage 2 Compose 项目执行 `docker compose up -d web`；web 容器运行并发布 `0.0.0.0:8081->80/tcp`。
+- HTTP：`http://localhost:8080/` 为 200；`http://localhost:8081/` 为 200；`http://localhost:8081/api/health` 为 200，JSON `status=ok`。
+- 服务状态：MySQL、collector、evaluator、scheduler 均为 `running|healthy`；API 与 web 均为 `running`。
+- 日志安全：Stage 2 容器日志中精确 DeepSeek 密钥值匹配 0，大小写不敏感的 `Authorization:` 匹配 0。未记录凭据或 provider request identifier。

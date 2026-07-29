@@ -330,3 +330,10 @@
 - Stage 1 Demo 占用宿主机 8080，Stage 2 web 通过不发布端口的临时容器验证 Nginx 内部 HTTP 响应；未停止或修改 Stage 1。
 - 容器日志中真实密钥和 Authorization 请求头均为 0 匹配。第二阶段验收状态：通过。
 - 本阶段明确延期：政策转项目、项目台账、企业微信通知、企业档案编辑及新增政策来源。
+
+## 19. 2026-07-29 第二阶段本地 8081 发布
+
+- Stage 2 web 已通过 `WEB_PORT=8081` 发布到 `http://localhost:8081`。发布前 Stage 1 保持在 8080，8081 无既有 TCP 监听；Stage 1 未被停止或修改。
+- 两个浏览器入口均返回 HTTP 200，Stage 2 `/api/health` 返回 HTTP 200 且 JSON `status=ok`。
+- MySQL、collector、evaluator、scheduler 为 `running|healthy`；API 与 web 为 `running`。
+- Stage 2 容器日志的精确 DeepSeek 密钥值和大小写不敏感 `Authorization:` 扫描均为 0 匹配；未保存凭据或 provider request identifier。
