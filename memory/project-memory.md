@@ -337,3 +337,9 @@
 - 两个浏览器入口均返回 HTTP 200，Stage 2 `/api/health` 返回 HTTP 200 且 JSON `status=ok`。
 - MySQL、collector、evaluator、scheduler 为 `running|healthy`；API 与 web 为 `running`。
 - Stage 2 容器日志的精确 DeepSeek 密钥值和大小写不敏感 `Authorization:` 扫描均为 0 匹配；未保存凭据或 provider request identifier。
+
+## 20. 2026-07-30 第二阶段 8081 发布连续性修复
+
+- 原始 `docker compose up -d web` 发布曾短暂重建 Stage 2 API，未满足既有服务持续运行要求；该事实已补充至 smoke record。
+- 已将发布路径修正为 `docker compose up -d --no-deps web`，并验证执行前后 API 容器 ID 和 `StartedAt` 均相同；API 未重建或重启。
+- 修复后 8080、8081 与 Stage 2 health 入口均返回 HTTP 200，health JSON `status=ok`；必需服务健康，容器日志的精确 DeepSeek 密钥与大小写不敏感 `Authorization:` 扫描均为 0 匹配。

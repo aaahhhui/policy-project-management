@@ -4,7 +4,7 @@
 
 **Goal:** Publish the complete Stage 2 web stack at `http://localhost:8081` while keeping the Stage 1 Demo available at `http://localhost:8080`.
 
-**Architecture:** Parameterize only the web host port in the shared Compose file, retaining 8080 as the default. Set the Stage 2 override in its Git-ignored `.env`, then let Compose recreate only the Stage 2 web service and verify both stacks independently.
+**Architecture:** Parameterize only the web host port in the shared Compose file, retaining 8080 as the default. Set the Stage 2 override in its Git-ignored `.env`, then publish only the Stage 2 web service with `--no-deps` and verify both stacks independently without recreating API.
 
 **Tech Stack:** Docker Desktop 4.84.0, Docker Engine 29.6.2, Docker Compose 5.3.1, Nginx, PowerShell.
 
@@ -86,10 +86,30 @@ Inspect Docker publishers and TCP listeners. Assert Stage 1 owns 8080 and no exi
 - [ ] **Step 2: Start the Stage 2 web service**
 
 ```powershell
-& $docker compose up -d web
+$apiIdBefore = (& $docker compose ps -q api).Trim()
+$apiStartedAtBefore = (& $docker inspect -f '{{.State.StartedAt}}' $apiIdBefore).Trim()
+if (-not $apiIdBefore -or -not $apiStartedAtBefore) { throw 'Stage 2 API is not running before web publication' }
+
+$previousErrorActionPreference = $ErrorActionPreference
+try {
+  $ErrorActionPreference = 'Continue' # Docker writes normal status lines to stderr.
+  $publicationOutput = & $docker compose up -d --no-deps web 2>&1
+  $publicationExitCode = $LASTEXITCODE
+}
+finally {
+  $ErrorActionPreference = $previousErrorActionPreference
+}
+if ($publicationExitCode -ne 0) { throw 'Stage 2 web publication failed' }
+
+$apiIdAfter = (& $docker compose ps -q api).Trim()
+$apiStartedAtAfter = (& $docker inspect -f '{{.State.StartedAt}}' $apiIdAfter).Trim()
+if ($apiIdBefore -ne $apiIdAfter) { throw 'Stage 2 API container was recreated' }
+if ($apiStartedAtBefore -ne $apiStartedAtAfter) { throw 'Stage 2 API was restarted' }
+Write-Output "API container ID unchanged: $($apiIdBefore -eq $apiIdAfter)"
+Write-Output "API StartedAt unchanged: $($apiStartedAtBefore -eq $apiStartedAtAfter)"
 ```
 
-Expected: the Stage 2 web container is running and publishes `0.0.0.0:8081->80/tcp`; existing Stage 2 services remain running.
+Expected: the Stage 2 web container is running and publishes `0.0.0.0:8081->80/tcp`; existing Stage 2 services remain running; the API container ID and `StartedAt` are unchanged. Do not print either identity value.
 
 - [ ] **Step 3: Verify both browser entry points and the Stage 2 API proxy**
 
@@ -107,7 +127,7 @@ Assert MySQL, collector, evaluator, and scheduler are `running|healthy`; API and
 
 - [ ] **Step 5: Record the publication**
 
-Append the 8081 entry point, Stage 1 isolation result, HTTP results, container health, and zero-match log scan to the Stage 2 smoke record and project memory. Do not record credentials or provider request identifiers.
+Append the 8081 entry point, Stage 1 isolation result, API-continuity assertions, HTTP results, container health, and zero-match log scan to the Stage 2 smoke record and project memory. If a previous publication command recreated API, record that interruption and the subsequent corrected no-recreation validation truthfully. Do not record credentials or provider request identifiers.
 
 - [ ] **Step 6: Run final checks and commit**
 

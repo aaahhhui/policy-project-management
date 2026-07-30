@@ -59,3 +59,10 @@ Stage 1 Demo 正占用宿主机 8080，因此未同时发布 Stage 2 web 的宿�
 - HTTP：`http://localhost:8080/` 为 200；`http://localhost:8081/` 为 200；`http://localhost:8081/api/health` 为 200，JSON `status=ok`。
 - 服务状态：MySQL、collector、evaluator、scheduler 均为 `running|healthy`；API 与 web 均为 `running`。
 - 日志安全：Stage 2 容器日志中精确 DeepSeek 密钥值匹配 0，大小写不敏感的 `Authorization:` 匹配 0。未记录凭据或 provider request identifier。
+
+## 2026-07-30 本地 8081 发布连续性修复
+
+- 首次发布使用 `docker compose up -d web`，Compose 曾短暂重建既有 Stage 2 API；该中断不满足“既有服务保持运行”要求，现如实更正记录。
+- 修复后的发布命令为 `docker compose up -d --no-deps web`。执行前后 API 容器 ID 相同，`StartedAt` 相同（两个断言均为 true）；未重建或重启 API。
+- 修复后复核：`http://localhost:8080/`、`http://localhost:8081/` 和 `http://localhost:8081/api/health` 均为 HTTP 200，health JSON `status=ok`；MySQL、collector、evaluator、scheduler 为 `running|healthy`，API 与 web 为 `running`。
+- 安全复核：Stage 2 容器日志中精确 DeepSeek 密钥值匹配 0，大小写不敏感的 `Authorization:` 匹配 0。未记录凭据或 provider request identifier。
