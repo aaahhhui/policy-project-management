@@ -1,4 +1,6 @@
 from types import SimpleNamespace
+import subprocess
+import sys
 
 from workers.evaluator import evaluation_adapter, run_once
 from app.modules.evaluations.adapters.deepseek import DeepSeekEvaluationAdapter
@@ -89,3 +91,19 @@ def test_worker_constructs_deepseek_adapter_from_recorded_model(monkeypatch) -> 
 
     assert evaluation_adapter("deepseek", "recorded-model") is selected
     assert calls == [("https://api.deepseek.com", "recorded-model")]
+
+
+def test_worker_registers_users_table_for_audit_event_foreign_key() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from app.db.base import Base; import workers.evaluator; "
+            "assert 'users' in Base.metadata.tables",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr

@@ -25,6 +25,7 @@ EVALUATION_STATUS_TYPE = Enum(
     native_enum=False,
     create_constraint=True,
     validate_strings=True,
+    length=32,
 )
 EVALUATION_CONCLUSION_TYPE = Enum(
     *CONCLUSIONS,

@@ -77,3 +77,15 @@ def test_stage2_decision_constraints_exist(migrated_inspector: Inspector) -> Non
         for item in migrated_inspector.get_indexes("primary_entity_decisions")
     }
     assert current_indexes[("current_policy_id",)] == 1
+
+
+def test_stage2_status_column_accepts_the_longest_workflow_state(
+    migrated_inspector: Inspector,
+) -> None:
+    status_column = next(
+        column
+        for column in migrated_inspector.get_columns("evaluation_batches")
+        if column["name"] == "status"
+    )
+
+    assert status_column["type"].length >= len("awaiting_confirmation")
