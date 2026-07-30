@@ -3,7 +3,7 @@ import { computed, ref } from "vue";
 
 import { confirmEvaluation, type EntityEvaluation, type EvaluationBatch } from "../../api/evaluations";
 
-type ConfirmableEvaluation = Pick<EvaluationBatch, "id" | "conclusion" | "summary" | "key_conditions"> & { entities: EntityEvaluation[] };
+type ConfirmableEvaluation = Pick<EvaluationBatch, "id" | "conclusion" | "summary" | "key_conditions" | "profile_snapshot"> & { entities: EntityEvaluation[] };
 const props = defineProps<{ evaluation: ConfirmableEvaluation }>();
 const emit = defineEmits<{ confirmed: [] }>();
 const entities = ref(props.evaluation.entities.map((item) => ({ ...item })));
@@ -11,11 +11,26 @@ const reason = ref("");
 const error = ref("");
 const saving = ref(false);
 const changed = computed(() => JSON.stringify(entities.value) !== JSON.stringify(props.evaluation.entities));
+const fallbackNames: Record<string, string> = {
+  "ENTITY-BEIJING": "北京适创科技有限公司",
+  "ENTITY-SUZHOU": "苏州数算软云科技有限公司",
+  "ENTITY-SHENZHEN": "深圳适创腾扬科技有限公司",
+};
+const entityNames = computed(() => new Map(
+  props.evaluation.profile_snapshot.map((profile) => [
+    String(profile.seed_code ?? ""),
+    String(profile.legal_name ?? ""),
+  ]),
+));
+
+function entityName(seedCode: string): string {
+  return entityNames.value.get(seedCode) || fallbackNames[seedCode] || "经营主体";
+}
 
 async function submit() {
   error.value = "";
   if (changed.value && !reason.value.trim()) {
-    error.value = "修改 AI 建议后必须填写原因";
+    error.value = "修改模型建议后必须填写原因";
     return;
   }
   if (!props.evaluation.conclusion || !props.evaluation.summary) return;
@@ -39,14 +54,14 @@ async function submit() {
 
 <template>
   <form class="confirmation-form" @submit.prevent="submit">
-    <header><div><p>负责人复核</p><h3>确认评估结论</h3></div><span>AI 原始结果保持不变</span></header>
+    <header><div><p>负责人复核</p><h3>确认评估结论</h3></div><span>模型原始结果保持不变</span></header>
     <div class="score-grid">
       <label v-for="entity in entities" :key="entity.entity_seed_code">
-        <span>{{ entity.entity_seed_code }}</span>
+        <span>{{ entityName(entity.entity_seed_code) }}</span>
         <input v-model.number="entity.score" :data-score="entity.entity_seed_code" type="number" min="0" max="100" />
       </label>
     </div>
-    <label class="reason">修改原因<textarea v-model="reason" rows="2" placeholder="仅在修改 AI 建议时必填" /></label>
+    <label class="reason">修改原因<textarea v-model="reason" rows="2" placeholder="仅在修改模型建议时必填" /></label>
     <p v-if="error" role="alert">{{ error }}</p>
     <button type="submit" :disabled="saving">{{ saving ? "确认中…" : "确认评估" }}</button>
   </form>

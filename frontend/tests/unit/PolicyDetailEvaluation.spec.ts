@@ -126,6 +126,29 @@ describe("PolicyDetailView evaluation", () => {
     expect(wrapper.findAll("[data-conclusion]")).toHaveLength(1);
   });
 
+  it("does not show a false failure below an evaluation awaiting confirmation", async () => {
+    currentUser.value = {
+      id: 1, login_name: "owner", display_name: "负责人", roles: ["applicant_owner"],
+    };
+    vi.mocked(getEvaluations).mockResolvedValue([{
+      ...succeeded,
+      status: "awaiting_confirmation",
+      profile_snapshot: [
+        { seed_code: "ENTITY-BEIJING", legal_name: "北京适创科技有限公司" },
+        { seed_code: "ENTITY-SUZHOU", legal_name: "苏州数算软云科技有限公司" },
+        { seed_code: "ENTITY-SHENZHEN", legal_name: "深圳适创腾扬科技有限公司" },
+      ],
+    }]);
+
+    const wrapper = mount(PolicyDetailView);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("北京适创科技有限公司");
+    expect(wrapper.text()).not.toContain("评估失败");
+    expect(wrapper.text()).not.toContain("ENTITY-");
+    expect(wrapper.text()).not.toContain("AI");
+  });
+
   it("asks an owner to confirm retry and refreshes to pending state", async () => {
     currentUser.value = {
       id: 1, login_name: "owner", display_name: "负责人", roles: ["applicant_owner"],

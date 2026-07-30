@@ -154,7 +154,7 @@ onMounted(async () => {
           <span class="state-marker" aria-hidden="true"></span>
           <div><h2>评估中</h2><p>后台正在分析政策条件与三家经营主体档案，完成后将在这里显示结果。</p></div>
         </div>
-        <div v-else class="task-state failed" role="alert">
+        <div v-else-if="currentEvaluation.status === 'failed'" class="task-state failed" role="alert">
           <span class="state-marker" aria-hidden="true"></span>
           <div><h2>评估失败</h2><p>本次评估未生成有效结果。负责人可重新创建评估批次。</p></div>
         </div>

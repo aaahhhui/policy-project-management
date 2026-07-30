@@ -11,13 +11,20 @@ function formatTime(value: string | null): string {
     timeStyle: "short",
   }).format(new Date(value));
 }
+
+function entityName(seedCode: string): string {
+  const profile = props.evaluation.profile_snapshot.find(
+    (item) => item.seed_code === seedCode,
+  );
+  return String(profile?.legal_name ?? "");
+}
 </script>
 
 <template>
   <section class="evaluation-summary" aria-labelledby="evaluation-title">
     <header class="summary-header">
       <div>
-        <p class="eyebrow">AI 辅助分析 · 负责人确认前仅供参考</p>
+        <p class="eyebrow">模型辅助分析 · 负责人确认前仅供参考</p>
         <h2 id="evaluation-title">企业匹配评估</h2>
       </div>
       <dl>
@@ -28,7 +35,7 @@ function formatTime(value: string | null): string {
 
     <div class="summary-copy">
       <section>
-        <h3>AI 摘要</h3>
+        <h3>模型摘要</h3>
         <p>{{ props.evaluation.summary }}</p>
       </section>
       <section>
@@ -42,6 +49,7 @@ function formatTime(value: string | null): string {
         v-for="entity in props.evaluation.entities"
         :key="entity.entity_seed_code"
         :evaluation="entity"
+        :entity-name="entityName(entity.entity_seed_code)"
       />
     </div>
   </section>

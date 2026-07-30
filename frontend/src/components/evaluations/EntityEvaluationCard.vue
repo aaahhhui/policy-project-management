@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { EntityEvaluation } from "../../api/evaluations";
 
-const props = defineProps<{ evaluation: EntityEvaluation }>();
+const props = defineProps<{ evaluation: EntityEvaluation; entityName?: string }>();
 
 const entityNames: Record<string, string> = {
   "ENTITY-BEIJING": "北京适创科技有限公司",
@@ -20,13 +20,12 @@ const matchLabels: Record<string, string> = {
   <article class="entity-card" :data-match="props.evaluation.match_level">
     <header>
       <div>
-        <p class="entity-code">{{ props.evaluation.entity_seed_code }}</p>
-        <h3>{{ entityNames[props.evaluation.entity_seed_code] ?? props.evaluation.entity_seed_code }}</h3>
+        <h3>{{ props.entityName || entityNames[props.evaluation.entity_seed_code] || "经营主体" }}</h3>
       </div>
       <span class="match-level">{{ matchLabels[props.evaluation.match_level] ?? props.evaluation.match_level }}</span>
     </header>
 
-    <p v-if="props.evaluation.score !== undefined" class="score">AI 综合评分 <strong>{{ props.evaluation.score }}</strong>/100</p>
+    <p v-if="props.evaluation.score !== undefined" class="score">模型综合评分 <strong>{{ props.evaluation.score }}</strong>/100</p>
 
     <div class="evidence-track">
       <section>
@@ -52,7 +51,6 @@ const matchLabels: Record<string, string> = {
 .entity-card[data-match="high"] { border-top-color: #2f765f; }
 .entity-card[data-match="uncertain"] { border-top-color: #b6832d; }
 header { display: flex; align-items: start; justify-content: space-between; gap: .8rem; padding: 1rem 1rem .85rem; border-bottom: 1px solid #e5edf4; }
-.entity-code { margin: 0 0 .25rem; color: #7a8da1; font: 700 .68rem/1.2 ui-monospace, "SFMono-Regular", Consolas, monospace; letter-spacing: .06em; }
 h3 { margin: 0; color: #183753; font: 700 1rem/1.45 "Noto Serif SC", "Songti SC", serif; }
 .match-level { flex: none; padding: .2rem .5rem; color: #365a77; border: 1px solid #b9cad8; background: #f4f8fb; font-size: .72rem; font-weight: 800; }
 .evidence-track { padding: .95rem 1rem; }
