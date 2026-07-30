@@ -343,3 +343,7 @@
 - 原始 `docker compose up -d web` 发布曾短暂重建 Stage 2 API，未满足既有服务持续运行要求；该事实已补充至 smoke record。
 - 已将发布路径修正为 `docker compose up -d --no-deps web`，并验证执行前后 API 容器 ID 和 `StartedAt` 均相同；API 未重建或重启。
 - 修复后 8080、8081 与 Stage 2 health 入口均返回 HTTP 200，health JSON `status=ok`；必需服务健康，容器日志的精确 DeepSeek 密钥与大小写不敏感 `Authorization:` 扫描均为 0 匹配。
+## 21. 2026-07-30 Stage 2 冒烟测试待优化项
+
+- 规则发布失败时，前端当前仅显示“操作未完成，请检查规则内容后重试。”的通用提示；应显示服务端返回的具体校验原因（例如“启用的评分条件权重合计必须为 100”），使负责人可以直接修正草稿。
+- 本项为前端可用性优化，不影响已验证的规则发布校验、权限控制或 DeepSeek 评估链路；本次冒烟测试先按规则详情页的权重合计提示完成配置。
