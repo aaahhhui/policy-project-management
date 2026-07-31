@@ -11,6 +11,8 @@ from app.modules.evaluations.schemas import (
     EvaluationCancellationInput,
     EvaluationConfirmationInput,
     EvaluationConfirmationResponse,
+    PolicyConclusionDecisionInput,
+    PolicyConclusionDecisionResponse,
     PrimaryEntityDecisionResponse,
     PrimaryEntityInput,
 )
@@ -24,8 +26,10 @@ from app.modules.evaluations.service import (
     EvaluationPolicyNotFound,
     EvaluationService,
     NoPublishedEvaluationRule,
+    PolicyConclusionReasonRequired,
     PrimaryEntityNotEligible,
     PrimaryEntityReasonRequired,
+    PrimaryEntityRequiredForRecommendation,
 )
 
 router = APIRouter(tags=["evaluations"])
@@ -110,6 +114,57 @@ def confirm_evaluation(
     except (ConfirmationConflict, EvaluationNotAwaitingConfirmation) as error:
         raise HTTPException(
             status_code=409, detail={"code": "evaluation_confirmation_conflict"}
+        ) from error
+
+
+@router.get(
+    "/api/policies/{policy_id}/conclusion-decisions",
+    response_model=list[PolicyConclusionDecisionResponse],
+)
+def conclusion_history(
+    policy_id: int, _: AuthenticatedUser, db: Session = Depends(get_db)
+) -> list[dict[str, object]]:
+    try:
+        return EvaluationService(db).conclusion_history(policy_id)
+    except EvaluationPolicyNotFound as error:
+        raise HTTPException(status_code=404, detail="Policy not found") from error
+
+
+@router.post(
+    "/api/policies/{policy_id}/conclusion-decisions",
+    response_model=PolicyConclusionDecisionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def adjust_conclusion(
+    policy_id: int,
+    payload: PolicyConclusionDecisionInput,
+    user: Owner,
+    db: Session = Depends(get_db),
+) -> PolicyConclusionDecisionResponse:
+    try:
+        decision = EvaluationService(db).adjust_conclusion(
+            policy_id,
+            payload.conclusion,
+            payload.reason,
+            user.id,
+        )
+        db.commit()
+        return PolicyConclusionDecisionResponse.model_validate(decision)
+    except EvaluationPolicyNotFound as error:
+        raise HTTPException(status_code=404, detail="Policy not found") from error
+    except EvaluationNotConfirmed as error:
+        raise HTTPException(
+            status_code=409, detail={"code": "evaluation_not_confirmed"}
+        ) from error
+    except PolicyConclusionReasonRequired as error:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "policy_conclusion_reason_required"},
+        ) from error
+    except PrimaryEntityRequiredForRecommendation as error:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "primary_entity_required_for_recommendation"},
         ) from error
 
 

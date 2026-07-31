@@ -15,9 +15,11 @@ from app.modules.evaluations.models import (
     EntityEvaluation,
     EvaluationBatch,
     EvaluationConfirmation,
+    PolicyConclusionDecision,
     PrimaryEntityDecision,
 )
 from app.modules.evaluations.schemas import (
+    Conclusion,
     EvaluationConfirmationInput,
     EvaluationResult,
     PrimaryEntityInput,
@@ -303,8 +305,11 @@ class EvaluationService:
                     or policy.current_evaluation_batch_id < current_batch.id
                 ):
                     policy.current_evaluation_batch_id = current_batch.id
-                    policy.current_conclusion = result.conclusion
-                    policy.conclusion_confirmed = False
+                    if policy.current_conclusion_source != "manual_override":
+                        policy.current_conclusion = result.conclusion
+                        policy.conclusion_confirmed = False
+                        policy.current_conclusion_source = "system_suggestion"
+                        policy.conclusion_confirmed_at = None
             completed = self.db.get(EvaluationBatch, batch.id)
             if completed is None:
                 raise ValueError(f"evaluation batch {batch.id} was not found")
@@ -413,8 +418,11 @@ class EvaluationService:
         if policy is None:
             raise ValueError(f"policy {version.policy_id} was not found")
         policy.current_evaluation_batch_id = batch.id
-        policy.current_conclusion = payload.conclusion
-        policy.conclusion_confirmed = True
+        if policy.current_conclusion_source != "manual_override":
+            policy.current_conclusion = payload.conclusion
+            policy.conclusion_confirmed = True
+            policy.current_conclusion_source = "evaluation_confirmation"
+            policy.conclusion_confirmed_at = now
         self.db.flush()
         AuditService(self.db).record(
             "evaluation_confirmed",
@@ -448,6 +456,110 @@ class EvaluationService:
                 key=lambda entity: entity["entity_seed_code"],
             ),
         }
+
+    def adjust_conclusion(
+        self,
+        policy_id: int,
+        conclusion: Conclusion,
+        reason: str,
+        actor_id: int,
+    ) -> PolicyConclusionDecision:
+        policy = self.db.scalar(
+            select(Policy).where(Policy.id == policy_id).with_for_update()
+        )
+        if policy is None:
+            raise EvaluationPolicyNotFound
+        normalized_reason = reason.strip()
+        if not normalized_reason:
+            raise PolicyConclusionReasonRequired
+        if policy.current_evaluation_batch_id is None:
+            raise EvaluationNotConfirmed
+        batch = self.db.scalar(
+            select(EvaluationBatch)
+            .where(
+                EvaluationBatch.id == policy.current_evaluation_batch_id,
+                EvaluationBatch.status == "confirmed",
+            )
+            .with_for_update()
+        )
+        if batch is None:
+            raise EvaluationNotConfirmed
+        confirmation = self.db.scalar(
+            select(EvaluationConfirmation).where(
+                EvaluationConfirmation.batch_id == batch.id
+            )
+        )
+        if confirmation is None:
+            raise EvaluationNotConfirmed
+        if conclusion == "recommend_apply":
+            primary = self.db.scalar(
+                select(PrimaryEntityDecision)
+                .where(PrimaryEntityDecision.current_policy_id == policy_id)
+                .with_for_update()
+            )
+            if primary is None:
+                raise PrimaryEntityRequiredForRecommendation
+
+        now = datetime.now(UTC)
+        previous_conclusion = policy.current_conclusion
+        decision = PolicyConclusionDecision(
+            policy_id=policy_id,
+            evaluation_batch_id=batch.id,
+            previous_conclusion=previous_conclusion,
+            conclusion=conclusion,
+            source="manual_override",
+            reason=normalized_reason,
+            decided_by=actor_id,
+            decided_at=now,
+        )
+        self.db.add(decision)
+        self.db.flush()
+        policy.current_conclusion = conclusion
+        policy.conclusion_confirmed = True
+        policy.current_conclusion_source = "manual_override"
+        policy.conclusion_confirmed_at = now
+        AuditService(self.db).record(
+            "policy_conclusion_changed",
+            actor_id,
+            "policy_conclusion_decision",
+            decision.id,
+            reason=normalized_reason,
+            changes={
+                "policy_id": policy_id,
+                "evaluation_batch_id": batch.id,
+                "previous_conclusion": previous_conclusion,
+                "conclusion": conclusion,
+            },
+        )
+        return decision
+
+    def conclusion_history(self, policy_id: int) -> list[dict[str, Any]]:
+        if self.db.get(Policy, policy_id) is None:
+            raise EvaluationPolicyNotFound
+        rows = list(
+            self.db.scalars(
+                select(PolicyConclusionDecision)
+                .where(PolicyConclusionDecision.policy_id == policy_id)
+                .order_by(
+                    PolicyConclusionDecision.decided_at.desc(),
+                    PolicyConclusionDecision.id.desc(),
+                )
+            )
+        )
+        return [
+            {
+                "id": row.id,
+                "policy_id": row.policy_id,
+                "evaluation_batch_id": row.evaluation_batch_id,
+                "previous_conclusion": row.previous_conclusion,
+                "conclusion": row.conclusion,
+                "source": row.source,
+                "reason": row.reason,
+                "decided_by": row.decided_by,
+                "decided_at": row.decided_at,
+            }
+            for row in rows
+        ]
 
     def select_primary_entity(
         self, policy_id: int, payload: PrimaryEntityInput, actor_id: int
@@ -595,4 +707,12 @@ class PrimaryEntityNotEligible(Exception):
 
 
 class PrimaryEntityReasonRequired(Exception):
+    pass
+
+
+class PolicyConclusionReasonRequired(Exception):
+    pass
+
+
+class PrimaryEntityRequiredForRecommendation(Exception):
     pass

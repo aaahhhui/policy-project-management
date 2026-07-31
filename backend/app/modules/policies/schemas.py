@@ -11,6 +11,8 @@ class PolicyListItem(BaseModel):
     deadline_on: date | None
     current_conclusion: str
     conclusion_confirmed: bool
+    current_conclusion_source: str
+    conclusion_confirmed_at: datetime | None
     sources: list[str]
 
 
@@ -65,6 +67,8 @@ class PolicyDetail(BaseModel):
     deadline_on: date | None
     current_conclusion: str
     conclusion_confirmed: bool
+    current_conclusion_source: str
+    conclusion_confirmed_at: datetime | None
     current_evaluation_batch_id: int | None
     current_version: PolicyVersionResponse
     discoveries: list[PolicyDiscoveryResponse]

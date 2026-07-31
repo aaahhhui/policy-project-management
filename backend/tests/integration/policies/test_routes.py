@@ -109,6 +109,10 @@ def test_policy_list_filters_keyword_and_sorts_unknown_dates_last(
         "制造业数字化转型项目申报通知",
         "数字化改造补充说明",
     ]
+    assert {
+        (item["current_conclusion_source"], item["conclusion_confirmed_at"])
+        for item in payload["items"]
+    } == {("system_suggestion", None)}
     assert payload == {**payload, "page": 1, "page_size": 20, "total": 2}
 
 
@@ -195,6 +199,8 @@ def test_policy_detail_and_versions_preserve_traceability(
     assert payload["discoveries"][0]["channel_name"] == channel.name
     assert payload["attachments"][0]["display_name"] == "申报指南.pdf"
     assert payload["current_conclusion"] == "pending_confirmation"
+    assert payload["current_conclusion_source"] == "system_suggestion"
+    assert payload["conclusion_confirmed_at"] is None
     assert [item["id"] for item in versions.json()] == [second.id, first.id]
 
 

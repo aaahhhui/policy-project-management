@@ -119,6 +119,8 @@ class PolicyQueryService:
                 deadline_on=policies[policy_id].deadline_on,
                 current_conclusion=policies[policy_id].current_conclusion,
                 conclusion_confirmed=policies[policy_id].conclusion_confirmed,
+                current_conclusion_source=policies[policy_id].current_conclusion_source,
+                conclusion_confirmed_at=policies[policy_id].conclusion_confirmed_at,
                 sources=sources[policy_id],
             )
             for policy_id in ids
@@ -162,6 +164,8 @@ class PolicyQueryService:
             deadline_on=policy.deadline_on,
             current_conclusion=policy.current_conclusion,
             conclusion_confirmed=policy.conclusion_confirmed,
+            current_conclusion_source=policy.current_conclusion_source,
+            conclusion_confirmed_at=policy.conclusion_confirmed_at,
             current_evaluation_batch_id=policy.current_evaluation_batch_id,
             current_version=self._version_response(version),
             discoveries=[

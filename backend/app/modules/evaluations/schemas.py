@@ -4,6 +4,7 @@ from typing import Any, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ENTITY_CODES = {"ENTITY-BEIJING", "ENTITY-SUZHOU", "ENTITY-SHENZHEN"}
+Conclusion = Literal["recommend_apply", "watch", "not_recommended", "uncertain"]
 
 
 class HardRuleResult(BaseModel):
@@ -89,6 +90,27 @@ class EvaluationConfirmationResponse(BaseModel):
 
 class EvaluationCancellationInput(BaseModel):
     reason: str | None = Field(default=None, max_length=2000)
+
+
+class PolicyConclusionDecisionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    conclusion: Conclusion
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class PolicyConclusionDecisionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    policy_id: int
+    evaluation_batch_id: int
+    previous_conclusion: str
+    conclusion: str
+    source: str
+    reason: str | None
+    decided_by: int
+    decided_at: datetime
 
 
 class PrimaryEntityInput(BaseModel):
