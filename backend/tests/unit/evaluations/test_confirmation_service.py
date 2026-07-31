@@ -10,12 +10,16 @@ from app.modules.evaluations.models import (
     PolicyConclusionDecision,
     PrimaryEntityDecision,
 )
-from app.modules.evaluations.schemas import EvaluationConfirmationInput
+from app.modules.evaluations.schemas import (
+    EvaluationConfirmationInput,
+    PrimaryEntityInput,
+)
 from app.modules.evaluations.service import (
     ConfirmationConflict,
     ConfirmationReasonRequired,
     EvaluationService,
     PrimaryEntityNotEligible,
+    PrimaryEntityReasonRequired,
     PrimaryEntityRequiredForRecommendation,
 )
 from app.modules.policies.models import Policy, PolicyVersion
@@ -186,3 +190,100 @@ def test_ineligible_primary_entity_leaves_confirmation_transaction_untouched(
         for model in tracked_models
     } == counts_before
     assert batch.status == "awaiting_confirmation"
+
+
+def test_original_recommendation_retry_stays_idempotent_after_primary_switch(
+    db, seeded_owner
+) -> None:
+    batch = awaiting_batch(db)
+    service = EvaluationService(db)
+    original_request = confirmation_payload(batch, reason="确认由北京主体申报")
+    original_request.conclusion = "recommend_apply"
+    original_request.primary_entity_seed_code = "ENTITY-BEIJING"
+    first = service.confirm(batch.id, original_request, seeded_owner.id)
+    version = db.get(PolicyVersion, batch.policy_version_id)
+    assert version is not None
+    service.select_primary_entity(
+        version.policy_id,
+        PrimaryEntityInput(
+            entity_seed_code="ENTITY-SUZHOU",
+            reason="切换为苏州主体",
+        ),
+        seeded_owner.id,
+    )
+
+    replayed = service.confirm(batch.id, original_request, seeded_owner.id)
+
+    assert replayed.id == first.id
+
+
+def test_switched_primary_is_not_an_equivalent_confirmation_retry(
+    db, seeded_owner
+) -> None:
+    batch = awaiting_batch(db)
+    service = EvaluationService(db)
+    original_request = confirmation_payload(batch, reason="确认由北京主体申报")
+    original_request.conclusion = "recommend_apply"
+    original_request.primary_entity_seed_code = "ENTITY-BEIJING"
+    service.confirm(batch.id, original_request, seeded_owner.id)
+    version = db.get(PolicyVersion, batch.policy_version_id)
+    assert version is not None
+    service.select_primary_entity(
+        version.policy_id,
+        PrimaryEntityInput(
+            entity_seed_code="ENTITY-SUZHOU",
+            reason="切换为苏州主体",
+        ),
+        seeded_owner.id,
+    )
+    switched_request = original_request.model_copy(
+        update={"primary_entity_seed_code": "ENTITY-SUZHOU"}
+    )
+
+    with pytest.raises(ConfirmationConflict):
+        service.confirm(batch.id, switched_request, seeded_owner.id)
+
+
+def test_confirmation_primary_switch_without_reason_leaves_transaction_untouched(
+    db, seeded_owner
+) -> None:
+    first_batch = awaiting_batch(db)
+    service = EvaluationService(db)
+    service.confirm(
+        first_batch.id,
+        confirmation_payload(first_batch),
+        seeded_owner.id,
+    )
+    version = db.get(PolicyVersion, first_batch.policy_version_id)
+    assert version is not None
+    service.select_primary_entity(
+        version.policy_id,
+        PrimaryEntityInput(entity_seed_code="ENTITY-BEIJING"),
+        seeded_owner.id,
+    )
+    service.enqueue(first_batch.policy_version_id, seeded_owner.id)
+    db.commit()
+    next_batch = service.run_next(MockEvaluationAdapter())
+    assert next_batch is not None
+    payload_input = confirmation_payload(next_batch)
+    payload_input.conclusion = "recommend_apply"
+    payload_input.primary_entity_seed_code = "ENTITY-SUZHOU"
+    tracked_models = (
+        EvaluationConfirmation,
+        PolicyConclusionDecision,
+        PrimaryEntityDecision,
+        AuditEvent,
+    )
+    counts_before = {
+        model: db.scalar(select(func.count()).select_from(model))
+        for model in tracked_models
+    }
+
+    with pytest.raises(PrimaryEntityReasonRequired):
+        service.confirm(next_batch.id, payload_input, seeded_owner.id)
+
+    assert {
+        model: db.scalar(select(func.count()).select_from(model))
+        for model in tracked_models
+    } == counts_before
+    assert next_batch.status == "awaiting_confirmation"
