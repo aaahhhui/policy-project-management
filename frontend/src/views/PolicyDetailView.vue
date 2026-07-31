@@ -2,7 +2,13 @@
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
-import { createEvaluation, getEvaluations, type EvaluationBatch } from "../api/evaluations";
+import {
+  createEvaluation,
+  getEvaluations,
+  getPrimaryEntityHistory,
+  type EvaluationBatch,
+  type PrimaryEntityDecision,
+} from "../api/evaluations";
 import { getPolicy, getPolicyVersions, type PolicyDetail, type PolicyVersion } from "../api/policies";
 import { currentUser } from "../auth/state";
 import EvaluationHistory from "../components/evaluations/EvaluationHistory.vue";
@@ -21,6 +27,7 @@ const loading = ref(true);
 const error = ref("");
 const evaluationError = ref("");
 const evaluationLoading = ref(true);
+const primaryEntity = ref<PrimaryEntityDecision | null>(null);
 const confirmRetryOpen = ref(false);
 const retrying = ref(false);
 const retryButton = ref<HTMLButtonElement | null>(null);
@@ -44,6 +51,15 @@ async function refreshEvaluations(id: number): Promise<boolean> {
     return false;
   } finally {
     evaluationLoading.value = false;
+  }
+}
+
+async function refreshPrimaryEntity(id: number): Promise<void> {
+  try {
+    const history = await getPrimaryEntityHistory(id);
+    primaryEntity.value = history.find((decision) => decision.is_current) ?? null;
+  } catch {
+    primaryEntity.value = null;
   }
 }
 
@@ -111,6 +127,7 @@ onMounted(async () => {
   try {
     [policy.value, versions.value] = await Promise.all([getPolicy(id), getPolicyVersions(id)]);
     void refreshEvaluations(id);
+    void refreshPrimaryEntity(id);
   }
   catch { error.value = "无法加载政策详情。请返回政策中心后重试。"; }
   finally { loading.value = false; }
@@ -148,7 +165,8 @@ onMounted(async () => {
           v-if="canRetry && currentEvaluation.status === 'confirmed' && policy"
           :policy-id="policy.id"
           :candidates="currentEvaluation.entities.map((entity) => ({ entity_seed_code: entity.entity_seed_code, label: String(currentEvaluation.profile_snapshot.find((profile) => profile.seed_code === entity.entity_seed_code)?.legal_name ?? entity.entity_seed_code) }))"
-          :current="null"
+          :current="primaryEntity"
+          @selected="refreshPrimaryEntity(policy.id)"
         />
         <div v-else-if="['pending', 'running'].includes(currentEvaluation.status)" class="task-state" role="status">
           <span class="state-marker" aria-hidden="true"></span>

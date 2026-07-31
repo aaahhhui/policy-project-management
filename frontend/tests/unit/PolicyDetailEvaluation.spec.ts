@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createEvaluation,
   getEvaluations,
+  getPrimaryEntityHistory,
+  selectPrimaryEntity,
   type EntityEvaluation,
   type EvaluationBatch,
 } from "../../src/api/evaluations";
@@ -19,6 +21,8 @@ vi.mock("../../src/api/policies", () => ({
 vi.mock("../../src/api/evaluations", () => ({
   getEvaluations: vi.fn(),
   createEvaluation: vi.fn(),
+  getPrimaryEntityHistory: vi.fn(),
+  selectPrimaryEntity: vi.fn(),
 }));
 
 const policy = {
@@ -88,9 +92,77 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(getPolicy).mockResolvedValue(policy);
   vi.mocked(getPolicyVersions).mockResolvedValue([policy.current_version]);
+  vi.mocked(getPrimaryEntityHistory).mockResolvedValue([]);
 });
 
 describe("PolicyDetailView evaluation", () => {
+  it("loads and displays the saved primary entity for a confirmed evaluation", async () => {
+    currentUser.value = {
+      id: 1, login_name: "owner", display_name: "负责人", roles: ["applicant_owner"],
+    };
+    vi.mocked(getEvaluations).mockResolvedValue([{
+      ...succeeded,
+      status: "confirmed",
+      profile_snapshot: [
+        { seed_code: "ENTITY-BEIJING", legal_name: "北京适创科技有限公司" },
+        { seed_code: "ENTITY-SUZHOU", legal_name: "苏州数算软云科技有限公司" },
+        { seed_code: "ENTITY-SHENZHEN", legal_name: "深圳适创腾扬科技有限公司" },
+      ],
+    }]);
+    vi.mocked(getPrimaryEntityHistory).mockResolvedValue([{
+      entity_seed_code: "ENTITY-SHENZHEN",
+      entity_legal_name: "深圳适创腾扬科技有限公司",
+      is_current: true,
+    }]);
+
+    const wrapper = mount(PolicyDetailView);
+    await flushPromises();
+
+    expect(getPrimaryEntityHistory).toHaveBeenCalledWith(8);
+    expect(wrapper.get<HTMLInputElement>('input[value="ENTITY-SHENZHEN"]').element.checked).toBe(true);
+    expect(wrapper.get(".primary-selector button").text()).toBe("更新主申报企业");
+    expect(selectPrimaryEntity).not.toHaveBeenCalled();
+  });
+
+  it("refreshes the saved primary entity after the owner confirms it", async () => {
+    currentUser.value = {
+      id: 1, login_name: "owner", display_name: "负责人", roles: ["applicant_owner"],
+    };
+    vi.mocked(getEvaluations).mockResolvedValue([{
+      ...succeeded,
+      status: "confirmed",
+      profile_snapshot: [
+        { seed_code: "ENTITY-BEIJING", legal_name: "北京适创科技有限公司" },
+        { seed_code: "ENTITY-SUZHOU", legal_name: "苏州数算软云科技有限公司" },
+        { seed_code: "ENTITY-SHENZHEN", legal_name: "深圳适创腾扬科技有限公司" },
+      ],
+    }]);
+    vi.mocked(getPrimaryEntityHistory)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{
+        entity_seed_code: "ENTITY-BEIJING",
+        entity_legal_name: "北京适创科技有限公司",
+        is_current: true,
+      }]);
+    vi.mocked(selectPrimaryEntity).mockResolvedValue({
+      entity_seed_code: "ENTITY-BEIJING",
+      entity_legal_name: "北京适创科技有限公司",
+      is_current: true,
+    });
+
+    const wrapper = mount(PolicyDetailView);
+    await flushPromises();
+    await wrapper.get("form.primary-selector").trigger("submit");
+    await flushPromises();
+
+    expect(selectPrimaryEntity).toHaveBeenCalledWith(8, {
+      entity_seed_code: "ENTITY-BEIJING",
+      reason: null,
+    });
+    expect(getPrimaryEntityHistory).toHaveBeenCalledTimes(2);
+    expect(wrapper.get(".primary-selector button").text()).toBe("更新主申报企业");
+  });
+
   it("shows one policy conclusion, the current evaluation, and collapsed history", async () => {
     currentUser.value = {
       id: 1, login_name: "owner", display_name: "负责人", roles: ["applicant_owner"],
