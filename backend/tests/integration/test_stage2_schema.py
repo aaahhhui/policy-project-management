@@ -127,6 +127,12 @@ def test_stage2_tables_and_columns_exist(migrated_inspector: Inspector) -> None:
     }
     assert {"score", "hard_rule_results", "weighted_rule_results"} <= entity_columns
 
+    confirmation_columns = {
+        column["name"]
+        for column in migrated_inspector.get_columns("evaluation_confirmations")
+    }
+    assert "primary_entity_seed_code" in confirmation_columns
+
 
 def test_stage2_decision_constraints_exist(migrated_inspector: Inspector) -> None:
     status_checks = {

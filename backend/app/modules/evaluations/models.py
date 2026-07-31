@@ -111,6 +111,9 @@ class EvaluationConfirmation(Base, TimestampMixin):
     key_conditions: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     entity_results: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
     change_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    primary_entity_seed_code: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
     confirmed_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     confirmed_at: Mapped[datetime] = mapped_column(nullable=False)
 

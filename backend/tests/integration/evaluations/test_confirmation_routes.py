@@ -81,3 +81,4 @@ def test_recommendation_confirmation_requires_an_eligible_primary_entity(
     assert invalid.status_code == 422
     assert invalid.json()["detail"]["code"] == "primary_entity_not_eligible"
     assert accepted.status_code == 200
+    assert accepted.json()["primary_entity_seed_code"] == "ENTITY-BEIJING"

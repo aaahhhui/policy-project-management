@@ -395,26 +395,8 @@ class EvaluationService:
                     for item in existing.entity_results
                 ):
                     raise PrimaryEntityNotEligible
-                confirmed_primary = self.db.scalar(
-                    select(PrimaryEntityDecision)
-                    .where(
-                        PrimaryEntityDecision.policy_id == policy.id,
-                        PrimaryEntityDecision.selected_at <= existing.confirmed_at,
-                        or_(
-                            PrimaryEntityDecision.superseded_at.is_(None),
-                            PrimaryEntityDecision.superseded_at
-                            > existing.confirmed_at,
-                        ),
-                    )
-                    .order_by(
-                        PrimaryEntityDecision.selected_at.desc(),
-                        PrimaryEntityDecision.id.desc(),
-                    )
-                    .with_for_update()
-                )
                 if (
-                    confirmed_primary is None
-                    or confirmed_primary.entity_seed_code
+                    existing.primary_entity_seed_code
                     != payload.primary_entity_seed_code
                 ):
                     raise ConfirmationConflict(
@@ -479,6 +461,11 @@ class EvaluationService:
                 item.model_dump(mode="json") for item in payload.entities
             ],
             change_reason=reason,
+            primary_entity_seed_code=(
+                payload.primary_entity_seed_code
+                if payload.conclusion == "recommend_apply"
+                else None
+            ),
             confirmed_by=actor_id,
             confirmed_at=now,
         )

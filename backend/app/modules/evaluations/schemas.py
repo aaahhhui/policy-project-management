@@ -85,6 +85,7 @@ class EvaluationConfirmationResponse(BaseModel):
     key_conditions: list[str]
     entity_results: list[dict[str, Any]]
     change_reason: str | None
+    primary_entity_seed_code: str | None
     confirmed_by: int
     confirmed_at: datetime
 

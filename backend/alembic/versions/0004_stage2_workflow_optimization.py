@@ -45,6 +45,11 @@ def upgrade() -> None:
             sa.Column("conclusion_confirmed_at", sa.DateTime(timezone=True), nullable=True)
         )
 
+    with op.batch_alter_table("evaluation_confirmations") as batch_op:
+        batch_op.add_column(
+            sa.Column("primary_entity_seed_code", sa.String(length=64), nullable=True)
+        )
+
     op.create_table(
         "policy_conclusion_decisions",
         sa.Column("id", sa.Integer(), primary_key=True),
@@ -119,6 +124,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("policy_conclusion_decisions")
+
+    with op.batch_alter_table("evaluation_confirmations") as batch_op:
+        batch_op.drop_column("primary_entity_seed_code")
 
     with op.batch_alter_table("policies") as batch_op:
         batch_op.drop_column("conclusion_confirmed_at")

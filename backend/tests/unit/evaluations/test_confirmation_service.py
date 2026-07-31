@@ -148,7 +148,9 @@ def test_recommendation_confirmation_records_decisions_and_audits(
             PrimaryEntityDecision.current_policy_id == policy.id
         )
     )
+    db.expire(confirmation, ["primary_entity_seed_code"])
     assert confirmation.batch_id == batch.id
+    assert confirmation.primary_entity_seed_code == "ENTITY-BEIJING"
     assert batch.status == "confirmed"
     assert decision is not None
     assert decision.previous_conclusion == batch.raw_response["conclusion"]
@@ -287,3 +289,47 @@ def test_confirmation_primary_switch_without_reason_leaves_transaction_untouched
         for model in tracked_models
     } == counts_before
     assert next_batch.status == "awaiting_confirmation"
+
+
+def test_confirmation_retry_identity_survives_primary_timestamp_collision(
+    db, seeded_owner
+) -> None:
+    batch = awaiting_batch(db)
+    service = EvaluationService(db)
+    original_request = confirmation_payload(batch, reason="确认由北京主体申报")
+    original_request.conclusion = "recommend_apply"
+    original_request.primary_entity_seed_code = "ENTITY-BEIJING"
+    confirmation = service.confirm(batch.id, original_request, seeded_owner.id)
+    version = db.get(PolicyVersion, batch.policy_version_id)
+    assert version is not None
+    service.select_primary_entity(
+        version.policy_id,
+        PrimaryEntityInput(
+            entity_seed_code="ENTITY-SUZHOU",
+            reason="切换为苏州主体",
+        ),
+        seeded_owner.id,
+    )
+    decisions = list(
+        db.scalars(
+            select(PrimaryEntityDecision)
+            .where(PrimaryEntityDecision.policy_id == version.policy_id)
+            .order_by(PrimaryEntityDecision.id)
+        )
+    )
+    assert [item.entity_seed_code for item in decisions] == [
+        "ENTITY-BEIJING",
+        "ENTITY-SUZHOU",
+    ]
+    decisions[0].superseded_at = confirmation.confirmed_at
+    decisions[1].selected_at = confirmation.confirmed_at
+    db.flush()
+    switched_request = original_request.model_copy(
+        update={"primary_entity_seed_code": "ENTITY-SUZHOU"}
+    )
+
+    with pytest.raises(ConfirmationConflict):
+        service.confirm(batch.id, switched_request, seeded_owner.id)
+    replayed = service.confirm(batch.id, original_request, seeded_owner.id)
+
+    assert replayed.id == confirmation.id
