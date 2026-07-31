@@ -65,6 +65,7 @@ class EvaluationConfirmationInput(BaseModel):
     key_conditions: list[str]
     entities: list[EntityConfirmationInput]
     change_reason: str | None = Field(default=None, max_length=2000)
+    primary_entity_seed_code: str | None = None
 
     @model_validator(mode="after")
     def validate_entities(self) -> Self:

@@ -49,3 +49,35 @@ def test_owner_can_confirm_and_reader_cannot(db, client, seeded_owner, seeded_ow
     response = client.post(f"/api/evaluations/{batch.id}/confirmation", json=body)
     assert response.status_code == 200
     assert response.json()["batch_id"] == batch.id
+
+
+def test_recommendation_confirmation_requires_an_eligible_primary_entity(
+    db, client, seeded_owner, seeded_owner_password
+) -> None:
+    batch = create_awaiting(db)
+    body = confirmation_payload(batch).model_dump(mode="json")
+    body["conclusion"] = "recommend_apply"
+    body["change_reason"] = "确认申报主体"
+    login(client, seeded_owner.login_name, seeded_owner_password)
+
+    missing = client.post(
+        f"/api/evaluations/{batch.id}/confirmation",
+        json={**body, "primary_entity_seed_code": None},
+    )
+    invalid = client.post(
+        f"/api/evaluations/{batch.id}/confirmation",
+        json={**body, "primary_entity_seed_code": "ENTITY-NOT-ELIGIBLE"},
+    )
+    accepted = client.post(
+        f"/api/evaluations/{batch.id}/confirmation",
+        json={**body, "primary_entity_seed_code": "ENTITY-BEIJING"},
+    )
+
+    assert missing.status_code == 422
+    assert (
+        missing.json()["detail"]["code"]
+        == "primary_entity_required_for_recommendation"
+    )
+    assert invalid.status_code == 422
+    assert invalid.json()["detail"]["code"] == "primary_entity_not_eligible"
+    assert accepted.status_code == 200

@@ -69,7 +69,11 @@ def test_owner_appends_conclusion_and_reader_can_read_history(
 
     assert forbidden.status_code == 403
     assert history.status_code == 200
-    assert [item["id"] for item in history.json()] == [created.json()["id"]]
+    assert history.json()[0]["id"] == created.json()["id"]
+    assert [item["source"] for item in history.json()] == [
+        "manual_override",
+        "evaluation_confirmation",
+    ]
 
 
 def test_conclusion_routes_validate_prerequisites_and_authentication(

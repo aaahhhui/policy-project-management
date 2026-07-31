@@ -122,9 +122,12 @@ def test_conclusion_history_is_append_only_and_newest_first(db, seeded_owner) ->
         seeded_owner.id,
     )
 
-    assert [item["id"] for item in service.conclusion_history(policy.id)] == [
-        second.id,
-        first.id,
+    history = service.conclusion_history(policy.id)
+    assert [item["id"] for item in history[:2]] == [second.id, first.id]
+    assert [item["source"] for item in history] == [
+        "manual_override",
+        "manual_override",
+        "evaluation_confirmation",
     ]
     assert (
         db.scalar(
@@ -132,7 +135,7 @@ def test_conclusion_history_is_append_only_and_newest_first(db, seeded_owner) ->
                 PolicyConclusionDecision.policy_id == policy.id
             )
         )
-        == 2
+        == 3
     )
     assert second.previous_conclusion == "not_recommended"
 

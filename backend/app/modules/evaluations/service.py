@@ -366,19 +366,84 @@ class EvaluationService:
             raise EvaluationBatchNotFound
 
         normalized = self._normalize_confirmation_values(
-            payload.model_dump(mode="json", exclude={"change_reason"})
+            payload.model_dump(
+                mode="json",
+                exclude={"change_reason", "primary_entity_seed_code"},
+            )
         )
+        version = self.db.get(PolicyVersion, batch.policy_version_id)
+        if version is None:
+            raise ValueError(f"policy version {batch.policy_version_id} was not found")
+        policy = self.db.scalar(
+            select(Policy).where(Policy.id == version.policy_id).with_for_update()
+        )
+        if policy is None:
+            raise ValueError(f"policy {version.policy_id} was not found")
         existing = self.db.scalar(
             select(EvaluationConfirmation).where(
                 EvaluationConfirmation.batch_id == batch_id
             )
         )
         if existing is not None:
-            if self._confirmation_values(existing) == normalized:
-                return existing
-            raise ConfirmationConflict("evaluation batch is already confirmed")
+            if self._confirmation_values(existing) != normalized:
+                raise ConfirmationConflict("evaluation batch is already confirmed")
+            if existing.conclusion == "recommend_apply":
+                if payload.primary_entity_seed_code is None:
+                    raise PrimaryEntityRequiredForRecommendation
+                if not any(
+                    item["entity_seed_code"] == payload.primary_entity_seed_code
+                    for item in existing.entity_results
+                ):
+                    raise PrimaryEntityNotEligible
+                current_primary = self.db.scalar(
+                    select(PrimaryEntityDecision)
+                    .where(PrimaryEntityDecision.current_policy_id == policy.id)
+                    .with_for_update()
+                )
+                if (
+                    current_primary is None
+                    or current_primary.entity_seed_code
+                    != payload.primary_entity_seed_code
+                ):
+                    raise ConfirmationConflict(
+                        "evaluation confirmation primary entity no longer matches"
+                    )
+            return existing
         if batch.status != "awaiting_confirmation" or batch.raw_response is None:
             raise EvaluationNotAwaitingConfirmation
+
+        reason = payload.change_reason.strip() if payload.change_reason else None
+        primary_profile: dict[str, Any] | None = None
+        current_primary: PrimaryEntityDecision | None = None
+        if payload.conclusion == "recommend_apply":
+            if payload.primary_entity_seed_code is None:
+                raise PrimaryEntityRequiredForRecommendation
+            eligible_codes = {
+                item.entity_seed_code for item in payload.entities
+            }
+            primary_profile = next(
+                (
+                    item
+                    for item in batch.profile_snapshot
+                    if item["seed_code"] == payload.primary_entity_seed_code
+                    and item["seed_code"] in eligible_codes
+                ),
+                None,
+            )
+            if primary_profile is None:
+                raise PrimaryEntityNotEligible
+            current_primary = self.db.scalar(
+                select(PrimaryEntityDecision)
+                .where(PrimaryEntityDecision.current_policy_id == policy.id)
+                .with_for_update()
+            )
+            if (
+                current_primary is not None
+                and current_primary.entity_seed_code
+                != payload.primary_entity_seed_code
+                and not reason
+            ):
+                raise PrimaryEntityReasonRequired
 
         ai_values = self._normalize_confirmation_values(
             {
@@ -389,7 +454,6 @@ class EvaluationService:
             }
         )
         changed = normalized != ai_values
-        reason = payload.change_reason.strip() if payload.change_reason else None
         if changed and not reason:
             raise ConfirmationReasonRequired
 
@@ -407,22 +471,44 @@ class EvaluationService:
             confirmed_at=now,
         )
         self.db.add(confirmation)
+        self._append_conclusion_decision(
+            policy=policy,
+            batch=batch,
+            previous_conclusion=str(batch.raw_response["conclusion"]),
+            conclusion=payload.conclusion,
+            source="evaluation_confirmation",
+            reason=reason,
+            actor_id=actor_id,
+            decided_at=now,
+            update_projection=policy.current_conclusion_source != "manual_override",
+        )
+        new_primary: PrimaryEntityDecision | None = None
+        primary_action: str | None = None
+        if (
+            primary_profile is not None
+            and (
+                current_primary is None
+                or current_primary.entity_seed_code
+                != payload.primary_entity_seed_code
+            )
+        ):
+            primary_action = "primary_entity_selected"
+            if current_primary is not None:
+                current_primary.superseded_at = now
+                primary_action = "primary_entity_changed"
+            new_primary = PrimaryEntityDecision(
+                policy_id=policy.id,
+                batch_id=batch.id,
+                entity_seed_code=str(payload.primary_entity_seed_code),
+                entity_legal_name=str(primary_profile["legal_name"]),
+                selected_by=actor_id,
+                reason=reason,
+                selected_at=now,
+            )
+            self.db.add(new_primary)
         batch.status = "confirmed"
         batch.finished_at = now
-        version = self.db.get(PolicyVersion, batch.policy_version_id)
-        if version is None:
-            raise ValueError(f"policy version {batch.policy_version_id} was not found")
-        policy = self.db.scalar(
-            select(Policy).where(Policy.id == version.policy_id).with_for_update()
-        )
-        if policy is None:
-            raise ValueError(f"policy {version.policy_id} was not found")
         policy.current_evaluation_batch_id = batch.id
-        if policy.current_conclusion_source != "manual_override":
-            policy.current_conclusion = payload.conclusion
-            policy.conclusion_confirmed = True
-            policy.current_conclusion_source = "evaluation_confirmation"
-            policy.conclusion_confirmed_at = now
         self.db.flush()
         AuditService(self.db).record(
             "evaluation_confirmed",
@@ -432,6 +518,18 @@ class EvaluationService:
             reason=reason,
             changes={"ai_values_changed": changed},
         )
+        if new_primary is not None and primary_action is not None:
+            AuditService(self.db).record(
+                primary_action,
+                actor_id,
+                "primary_entity_decision",
+                new_primary.id,
+                reason=reason,
+                changes={
+                    "policy_id": policy.id,
+                    "entity_seed_code": new_primary.entity_seed_code,
+                },
+            )
         return confirmation
 
     @staticmethod
@@ -456,6 +554,38 @@ class EvaluationService:
                 key=lambda entity: entity["entity_seed_code"],
             ),
         }
+
+    def _append_conclusion_decision(
+        self,
+        *,
+        policy: Policy,
+        batch: EvaluationBatch,
+        previous_conclusion: str,
+        conclusion: Conclusion,
+        source: str,
+        reason: str | None,
+        actor_id: int,
+        decided_at: datetime,
+        update_projection: bool,
+    ) -> PolicyConclusionDecision:
+        decision = PolicyConclusionDecision(
+            policy_id=policy.id,
+            evaluation_batch_id=batch.id,
+            previous_conclusion=previous_conclusion,
+            conclusion=conclusion,
+            source=source,
+            reason=reason,
+            decided_by=actor_id,
+            decided_at=decided_at,
+        )
+        self.db.add(decision)
+        self.db.flush()
+        if update_projection:
+            policy.current_conclusion = conclusion
+            policy.conclusion_confirmed = True
+            policy.current_conclusion_source = source
+            policy.conclusion_confirmed_at = decided_at
+        return decision
 
     def adjust_conclusion(
         self,
@@ -502,22 +632,17 @@ class EvaluationService:
 
         now = datetime.now(UTC)
         previous_conclusion = policy.current_conclusion
-        decision = PolicyConclusionDecision(
-            policy_id=policy_id,
-            evaluation_batch_id=batch.id,
+        decision = self._append_conclusion_decision(
+            policy=policy,
+            batch=batch,
             previous_conclusion=previous_conclusion,
             conclusion=conclusion,
             source="manual_override",
             reason=normalized_reason,
-            decided_by=actor_id,
+            actor_id=actor_id,
             decided_at=now,
+            update_projection=True,
         )
-        self.db.add(decision)
-        self.db.flush()
-        policy.current_conclusion = conclusion
-        policy.conclusion_confirmed = True
-        policy.current_conclusion_source = "manual_override"
-        policy.conclusion_confirmed_at = now
         AuditService(self.db).record(
             "policy_conclusion_changed",
             actor_id,

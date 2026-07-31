@@ -20,7 +20,10 @@ from tests.unit.evaluations.test_confirmation_service import awaiting_batch, con
 def test_evaluation_decision_chain_is_audited_in_order(db, seeded_owner) -> None:
     batch = awaiting_batch(db)
     service = EvaluationService(db)
-    service.confirm(batch.id, confirmation_payload(batch), seeded_owner.id)
+    confirmation = confirmation_payload(batch, reason="确认由北京主体申报")
+    confirmation.conclusion = "recommend_apply"
+    confirmation.primary_entity_seed_code = "ENTITY-BEIJING"
+    service.confirm(batch.id, confirmation, seeded_owner.id)
     version = db.get(PolicyVersion, batch.policy_version_id)
     assert version is not None
     service.select_primary_entity(

@@ -111,6 +111,21 @@ def confirm_evaluation(
         raise HTTPException(
             status_code=422, detail={"code": "confirmation_reason_required"}
         ) from error
+    except PrimaryEntityRequiredForRecommendation as error:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "primary_entity_required_for_recommendation"},
+        ) from error
+    except PrimaryEntityNotEligible as error:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "primary_entity_not_eligible"},
+        ) from error
+    except PrimaryEntityReasonRequired as error:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "primary_entity_reason_required"},
+        ) from error
     except (ConfirmationConflict, EvaluationNotAwaitingConfirmation) as error:
         raise HTTPException(
             status_code=409, detail={"code": "evaluation_confirmation_conflict"}

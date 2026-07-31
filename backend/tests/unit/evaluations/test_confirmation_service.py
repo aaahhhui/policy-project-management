@@ -1,14 +1,24 @@
 from copy import deepcopy
 
 import pytest
+from sqlalchemy import func, select
 
+from app.modules.audit.models import AuditEvent
 from app.modules.evaluations.adapters.mock import MockEvaluationAdapter
+from app.modules.evaluations.models import (
+    EvaluationConfirmation,
+    PolicyConclusionDecision,
+    PrimaryEntityDecision,
+)
 from app.modules.evaluations.schemas import EvaluationConfirmationInput
 from app.modules.evaluations.service import (
     ConfirmationConflict,
     ConfirmationReasonRequired,
     EvaluationService,
+    PrimaryEntityNotEligible,
+    PrimaryEntityRequiredForRecommendation,
 )
+from app.modules.policies.models import Policy, PolicyVersion
 from app.modules.policies.service import PolicyIngestionService
 from tests.integration.evaluations.test_service import (
     FakeFileStore,
@@ -93,3 +103,86 @@ def test_different_retry_conflicts_with_existing_confirmation(db, seeded_owner) 
             confirmation_payload(batch, score_override=91, reason="人工调整评分"),
             seeded_owner.id,
         )
+
+
+def test_recommendation_requires_primary_entity_in_same_confirmation(
+    db, seeded_owner
+) -> None:
+    batch = awaiting_batch(db)
+    payload_input = confirmation_payload(batch)
+    payload_input.conclusion = "recommend_apply"
+    payload_input.primary_entity_seed_code = None
+
+    with pytest.raises(PrimaryEntityRequiredForRecommendation):
+        EvaluationService(db).confirm(batch.id, payload_input, seeded_owner.id)
+
+
+def test_recommendation_confirmation_records_decisions_and_audits(
+    db, seeded_owner
+) -> None:
+    batch = awaiting_batch(db)
+    payload_input = confirmation_payload(batch, reason="确认由北京主体申报")
+    payload_input.conclusion = "recommend_apply"
+    payload_input.primary_entity_seed_code = "ENTITY-BEIJING"
+
+    confirmation = EvaluationService(db).confirm(
+        batch.id, payload_input, seeded_owner.id
+    )
+
+    version = db.get(PolicyVersion, batch.policy_version_id)
+    assert version is not None
+    policy = db.get(Policy, version.policy_id)
+    assert policy is not None
+    decision = db.scalar(
+        select(PolicyConclusionDecision).where(
+            PolicyConclusionDecision.evaluation_batch_id == batch.id,
+            PolicyConclusionDecision.source == "evaluation_confirmation",
+        )
+    )
+    primary = db.scalar(
+        select(PrimaryEntityDecision).where(
+            PrimaryEntityDecision.current_policy_id == policy.id
+        )
+    )
+    assert confirmation.batch_id == batch.id
+    assert batch.status == "confirmed"
+    assert decision is not None
+    assert decision.previous_conclusion == batch.raw_response["conclusion"]
+    assert decision.conclusion == "recommend_apply"
+    assert decision.reason == "确认由北京主体申报"
+    assert primary is not None
+    assert primary.batch_id == batch.id
+    assert primary.entity_seed_code == "ENTITY-BEIJING"
+    assert primary.entity_legal_name == "Beijing"
+    assert policy.current_conclusion == "recommend_apply"
+    assert policy.current_conclusion_source == "evaluation_confirmation"
+    actions = list(db.scalars(select(AuditEvent.action).order_by(AuditEvent.id)))
+    assert actions[-2:] == ["evaluation_confirmed", "primary_entity_selected"]
+
+
+def test_ineligible_primary_entity_leaves_confirmation_transaction_untouched(
+    db, seeded_owner
+) -> None:
+    batch = awaiting_batch(db)
+    payload_input = confirmation_payload(batch, reason="确认申报主体")
+    payload_input.conclusion = "recommend_apply"
+    payload_input.primary_entity_seed_code = "ENTITY-NOT-ELIGIBLE"
+    tracked_models = (
+        EvaluationConfirmation,
+        PolicyConclusionDecision,
+        PrimaryEntityDecision,
+        AuditEvent,
+    )
+    counts_before = {
+        model: db.scalar(select(func.count()).select_from(model))
+        for model in tracked_models
+    }
+
+    with pytest.raises(PrimaryEntityNotEligible):
+        EvaluationService(db).confirm(batch.id, payload_input, seeded_owner.id)
+
+    assert {
+        model: db.scalar(select(func.count()).select_from(model))
+        for model in tracked_models
+    } == counts_before
+    assert batch.status == "awaiting_confirmation"
