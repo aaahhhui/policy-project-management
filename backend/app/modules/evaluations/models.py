@@ -16,6 +16,7 @@ EVALUATION_STATUSES = (
     "succeeded",
     "awaiting_confirmation",
     "confirmed",
+    "cancelled",
     "failed",
 )
 MATCH_LEVELS = ("high", "medium", "low", "uncertain")
@@ -73,6 +74,9 @@ class EvaluationBatch(Base, TimestampMixin):
     provider_request_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cancelled_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    cancel_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
@@ -109,6 +113,22 @@ class EvaluationConfirmation(Base, TimestampMixin):
     change_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     confirmed_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     confirmed_at: Mapped[datetime] = mapped_column(nullable=False)
+
+
+class PolicyConclusionDecision(Base, TimestampMixin):
+    __tablename__ = "policy_conclusion_decisions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    policy_id: Mapped[int] = mapped_column(ForeignKey("policies.id"), nullable=False)
+    evaluation_batch_id: Mapped[int] = mapped_column(
+        ForeignKey("evaluation_batches.id"), nullable=False
+    )
+    previous_conclusion: Mapped[str] = mapped_column(String(32), nullable=False)
+    conclusion: Mapped[str] = mapped_column(String(32), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decided_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    decided_at: Mapped[datetime] = mapped_column(nullable=False)
 
 
 class PrimaryEntityDecision(Base, TimestampMixin):

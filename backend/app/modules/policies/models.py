@@ -72,6 +72,10 @@ class Policy(Base, TimestampMixin):
     conclusion_confirmed: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=false()
     )
+    current_conclusion_source: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="system_suggestion"
+    )
+    conclusion_confirmed_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
 class PolicyDiscovery(Base, TimestampMixin):
