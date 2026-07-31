@@ -120,7 +120,7 @@ describe("PolicyDetailView evaluation", () => {
 
     expect(getPrimaryEntityHistory).toHaveBeenCalledWith(8);
     expect(wrapper.get<HTMLInputElement>('input[value="ENTITY-SHENZHEN"]').element.checked).toBe(true);
-    expect(wrapper.get(".primary-selector button").text()).toBe("更新主申报企业");
+    expect(wrapper.get(".primary-selector button").text()).toBe("当前企业已确认");
     expect(selectPrimaryEntity).not.toHaveBeenCalled();
   });
 
@@ -160,7 +160,7 @@ describe("PolicyDetailView evaluation", () => {
       reason: null,
     });
     expect(getPrimaryEntityHistory).toHaveBeenCalledTimes(2);
-    expect(wrapper.get(".primary-selector button").text()).toBe("更新主申报企业");
+    expect(wrapper.get(".primary-selector button").text()).toBe("当前企业已确认");
   });
 
   it("shows one policy conclusion, the current evaluation, and collapsed history", async () => {
