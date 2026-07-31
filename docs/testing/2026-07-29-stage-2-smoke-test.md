@@ -66,3 +66,44 @@ Stage 1 Demo 正占用宿主机 8080，因此未同时发布 Stage 2 web 的宿�
 - 修复后的发布命令为 `docker compose up -d --no-deps web`。执行前后 API 容器 ID 相同，`StartedAt` 相同（两个断言均为 true）；未重建或重启 API。
 - 修复后复核：`http://localhost:8080/`、`http://localhost:8081/` 和 `http://localhost:8081/api/health` 均为 HTTP 200，health JSON `status=ok`；MySQL、collector、evaluator、scheduler 为 `running|healthy`，API 与 web 为 `running`。
 - 安全复核：Stage 2 容器日志中精确 DeepSeek 密钥值匹配 0，大小写不敏感的 `Authorization:` 匹配 0。未记录凭据或 provider request identifier。
+
+## 2026-07-31 人工业务冒烟收口
+
+状态：核心业务闭环通过，遗留项进入流程优化清单。
+
+### 人工验收结果
+
+- 负责人登录、评估规则创建和发布：通过。
+- 政策中心真实采集数据、政策详情和历史版本：通过。
+- 政策 #16 重新评估：通过；批次 #24 使用真实 DeepSeek 完成三企业结构化评估，最终进入待确认状态。
+- 负责人原样确认评估：通过；修复企业结果顺序差异被误判为人工修改的问题后，批次 #24 状态为已确认。
+- 主申报企业首次确定、当前状态回显、带理由切换和唯一当前记录：通过。
+- 只读账号权限：通过；可查看政策、评估和历史，不可发布规则、重新评估、确认评估或修改主申报企业。
+- 审计链：通过；最近记录包含 `evaluation_started`、`evaluation_confirmed`、`primary_entity_selected` 和 `primary_entity_changed`。
+
+### 冒烟期间已修复问题
+
+- 登录态与服务重建后的可恢复性。
+- 规则发布失败缺少具体反馈的记录与诊断。
+- 政策采集数据为空及评估任务持久化问题。
+- 待确认批次误显示“评估失败”。
+- 负责人复核区显示内部英文编码。
+- 主申报企业确认后不刷新、重复提交无反馈及异步回显竞态。
+- 评估确认因企业数组顺序不同返回 422。
+
+### 待优化问题
+
+- 运行中的评估缺少自动轮询，后台完成后页面仍可能停留在“评估中”。
+- 主动取消的早期测试批次显示为“评估失败”，应区分“已取消”和真实失败。
+- 历史批次流水号不直观，宜增加“第 N 次评估”显示。
+- 政策处理结论与主申报企业应保持独立，并补齐人工调整政策结论、修改原因、审计历史和结论来源展示。
+- 规则发布失败应显示服务端具体校验原因。
+
+### 最终回归
+
+- 后端评估模块：38 项通过。
+- 前端：15 个测试文件、46 项测试通过。
+- Vue TypeScript：通过。
+- Vite 生产构建：通过；仅保留第三方 PURE 注释位置和主包超过 500 kB 的既有警告。
+- `http://localhost:8081/api/health`：`status=ok`。
+- MySQL、collector、evaluator、scheduler：运行且健康；API 与 web：运行。
