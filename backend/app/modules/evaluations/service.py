@@ -328,7 +328,9 @@ class EvaluationService:
         if batch is None:
             raise EvaluationBatchNotFound
 
-        normalized = payload.model_dump(mode="json", exclude={"change_reason"})
+        normalized = self._normalize_confirmation_values(
+            payload.model_dump(mode="json", exclude={"change_reason"})
+        )
         existing = self.db.scalar(
             select(EvaluationConfirmation).where(
                 EvaluationConfirmation.batch_id == batch_id
@@ -341,12 +343,14 @@ class EvaluationService:
         if batch.status != "awaiting_confirmation" or batch.raw_response is None:
             raise EvaluationNotAwaitingConfirmation
 
-        ai_values = {
-            "conclusion": batch.raw_response["conclusion"],
-            "summary": batch.raw_response["summary"],
-            "key_conditions": batch.raw_response["key_conditions"],
-            "entities": batch.raw_response["entities"],
-        }
+        ai_values = self._normalize_confirmation_values(
+            {
+                "conclusion": batch.raw_response["conclusion"],
+                "summary": batch.raw_response["summary"],
+                "key_conditions": batch.raw_response["key_conditions"],
+                "entities": batch.raw_response["entities"],
+            }
+        )
         changed = normalized != ai_values
         reason = payload.change_reason.strip() if payload.change_reason else None
         if changed and not reason:
@@ -394,11 +398,23 @@ class EvaluationService:
     def _confirmation_values(
         confirmation: EvaluationConfirmation,
     ) -> dict[str, Any]:
+        return EvaluationService._normalize_confirmation_values(
+            {
+                "conclusion": confirmation.conclusion,
+                "summary": confirmation.summary,
+                "key_conditions": confirmation.key_conditions,
+                "entities": confirmation.entity_results,
+            }
+        )
+
+    @staticmethod
+    def _normalize_confirmation_values(values: dict[str, Any]) -> dict[str, Any]:
         return {
-            "conclusion": confirmation.conclusion,
-            "summary": confirmation.summary,
-            "key_conditions": confirmation.key_conditions,
-            "entities": confirmation.entity_results,
+            **values,
+            "entities": sorted(
+                values["entities"],
+                key=lambda entity: entity["entity_seed_code"],
+            ),
         }
 
     def select_primary_entity(

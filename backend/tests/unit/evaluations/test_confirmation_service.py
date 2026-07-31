@@ -67,6 +67,21 @@ def test_confirmation_preserves_ai_result_and_is_idempotent(db, seeded_owner) ->
     assert batch.status == "confirmed"
 
 
+def test_reordered_entities_do_not_require_a_change_reason(db, seeded_owner) -> None:
+    batch = awaiting_batch(db)
+    payload_input = confirmation_payload(batch)
+    payload_input.entities = list(reversed(payload_input.entities))
+
+    confirmation = EvaluationService(db).confirm(
+        batch.id,
+        payload_input,
+        seeded_owner.id,
+    )
+
+    assert confirmation.change_reason is None
+    assert batch.status == "confirmed"
+
+
 def test_different_retry_conflicts_with_existing_confirmation(db, seeded_owner) -> None:
     batch = awaiting_batch(db)
     service = EvaluationService(db)
