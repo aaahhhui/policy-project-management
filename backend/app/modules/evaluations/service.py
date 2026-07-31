@@ -1,5 +1,5 @@
 from copy import deepcopy
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.modules.audit.service import AuditService
+from app.modules.evaluation_rules.service import EvaluationRuleService, RuleNotFound
 from app.modules.evaluations.adapters.base import EvaluationAdapter
 from app.modules.evaluations.contracts import EvaluationProviderResult, EvaluationRequest
 from app.modules.evaluations.models import (
@@ -24,7 +25,6 @@ from app.modules.evaluations.schemas import (
 from app.modules.policies.models import Policy, PolicyVersion
 from app.modules.profiles.models import BusinessEntity
 from app.modules.profiles.service import ENTITY_ORDER
-from app.modules.evaluation_rules.service import EvaluationRuleService, RuleNotFound
 
 
 class EvaluationService:
@@ -132,6 +132,9 @@ class EvaluationService:
                 "provider_request_id": batch.provider_request_id,
                 "input_tokens": batch.input_tokens,
                 "output_tokens": batch.output_tokens,
+                "cancelled_by": batch.cancelled_by,
+                "cancelled_at": batch.cancelled_at,
+                "cancel_reason": batch.cancel_reason,
                 "profile_snapshot": batch.profile_snapshot,
                 "summary": batch.summary,
                 "key_conditions": batch.key_conditions,
@@ -145,12 +148,41 @@ class EvaluationService:
             for batch in batches
         ]
 
+    def cancel(
+        self, batch_id: int, reason: str | None, actor_id: int
+    ) -> EvaluationBatch:
+        batch = self.db.scalar(
+            select(EvaluationBatch)
+            .where(EvaluationBatch.id == batch_id)
+            .with_for_update()
+        )
+        if batch is None:
+            raise EvaluationBatchNotFound
+        if batch.status == "cancelled":
+            return batch
+        if batch.status not in {"pending", "running"}:
+            raise EvaluationCancellationConflict
+        batch.status = "cancelled"
+        batch.cancelled_by = actor_id
+        batch.cancelled_at = datetime.now(UTC)
+        batch.cancel_reason = reason.strip() or None if reason else None
+        batch.finished_at = batch.cancelled_at
+        batch.claim_token = None
+        AuditService(self.db).record(
+            "evaluation_cancelled",
+            actor_id,
+            "evaluation_batch",
+            batch.id,
+            reason=batch.cancel_reason,
+        )
+        return batch
+
     def claim_next(self) -> EvaluationBatch | None:
         if self.db.in_transaction():
             if self.db.new or self.db.dirty or self.db.deleted:
                 raise RuntimeError("claim_next requires a clean session")
             self.db.rollback()
-        stale_before = datetime.now(timezone.utc) - timedelta(minutes=15)
+        stale_before = datetime.now(UTC) - timedelta(minutes=15)
         with self.db.begin():
             batch = self.db.scalar(
                 select(EvaluationBatch)
@@ -172,7 +204,7 @@ class EvaluationService:
             if batch is None:
                 return None
             batch.status = "running"
-            batch.started_at = datetime.now(timezone.utc)
+            batch.started_at = datetime.now(UTC)
             batch.claim_token = str(uuid4())
         return batch
 
@@ -258,7 +290,7 @@ class EvaluationService:
                     current_batch.output_tokens = provider_result.output_tokens
                     current_batch.retry_count = provider_result.retry_count
                 current_batch.status = "awaiting_confirmation"
-                current_batch.finished_at = datetime.now(timezone.utc)
+                current_batch.finished_at = datetime.now(UTC)
                 policy = self.db.scalar(
                     select(Policy)
                     .where(Policy.id == current_version.policy_id)
@@ -301,7 +333,7 @@ class EvaluationService:
             if failed_batch.status == "running" and failed_batch.claim_token == claim_token:
                 failed_batch.status = "failed"
                 failed_batch.error_message = (str(error) or error.__class__.__name__)[:1000]
-                failed_batch.finished_at = datetime.now(timezone.utc)
+                failed_batch.finished_at = datetime.now(UTC)
                 AuditService(self.db).record(
                     "evaluation_failed",
                     None,
@@ -356,7 +388,7 @@ class EvaluationService:
         if changed and not reason:
             raise ConfirmationReasonRequired
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         confirmation = EvaluationConfirmation(
             batch_id=batch.id,
             conclusion=payload.conclusion,
@@ -463,7 +495,7 @@ class EvaluationService:
         if current is not None and not reason:
             raise PrimaryEntityReasonRequired
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         action = "primary_entity_selected"
         if current is not None:
             current.superseded_at = now
@@ -535,6 +567,10 @@ class NoPublishedEvaluationRule(Exception):
 
 
 class EvaluationBatchNotFound(Exception):
+    pass
+
+
+class EvaluationCancellationConflict(Exception):
     pass
 
 

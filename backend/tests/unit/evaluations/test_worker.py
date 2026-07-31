@@ -1,9 +1,22 @@
-from types import SimpleNamespace
 import subprocess
 import sys
+from types import SimpleNamespace
 
-from workers.evaluator import evaluation_adapter, run_once
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
 from app.modules.evaluations.adapters.deepseek import DeepSeekEvaluationAdapter
+from app.modules.evaluations.adapters.mock import MockEvaluationAdapter
+from app.modules.evaluations.models import EntityEvaluation
+from app.modules.evaluations.service import EvaluationService
+from app.modules.policies.service import PolicyIngestionService
+from tests.integration.evaluations.test_service import (
+    FakeFileStore,
+    payload,
+    seed_channel,
+    seed_entities,
+)
+from workers.evaluator import evaluation_adapter, run_once
 
 
 class SessionContext:
@@ -107,3 +120,30 @@ def test_worker_registers_users_table_for_audit_event_foreign_key() -> None:
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_worker_discards_provider_result_when_batch_is_cancelled_during_evaluation(
+    db, seeded_owner
+) -> None:
+    seed_entities(db)
+    channel = seed_channel(db)
+    PolicyIngestionService(db, file_store=FakeFileStore()).ingest(payload(channel.id))
+    service = EvaluationService(db)
+    claimed = service.claim_next()
+    assert claimed is not None and claimed.claim_token is not None
+    claim_token = claimed.claim_token
+
+    class CancellingAdapter:
+        def evaluate(self, request):
+            with Session(db.get_bind(), expire_on_commit=False) as cancelling_db:
+                EvaluationService(cancelling_db).cancel(
+                    claimed.id, "model no longer needed", seeded_owner.id
+                )
+                cancelling_db.commit()
+            return MockEvaluationAdapter().evaluate(request)
+
+    completed = service.process_claimed(claimed.id, claim_token, CancellingAdapter())
+
+    assert completed.status == "cancelled"
+    assert completed.claim_token is None
+    assert db.scalar(select(func.count(EntityEvaluation.id))) == 0

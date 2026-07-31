@@ -8,20 +8,22 @@ from app.modules.auth.dependencies import get_current_user, require_role
 from app.modules.auth.models import User
 from app.modules.evaluations.schemas import (
     EvaluationBatchResponse,
+    EvaluationCancellationInput,
     EvaluationConfirmationInput,
     EvaluationConfirmationResponse,
     PrimaryEntityDecisionResponse,
     PrimaryEntityInput,
 )
 from app.modules.evaluations.service import (
-    EvaluationPolicyNotFound,
-    EvaluationService,
-    NoPublishedEvaluationRule,
     ConfirmationConflict,
     ConfirmationReasonRequired,
     EvaluationBatchNotFound,
+    EvaluationCancellationConflict,
     EvaluationNotAwaitingConfirmation,
     EvaluationNotConfirmed,
+    EvaluationPolicyNotFound,
+    EvaluationService,
+    NoPublishedEvaluationRule,
     PrimaryEntityNotEligible,
     PrimaryEntityReasonRequired,
 )
@@ -60,6 +62,28 @@ def create_evaluation(policy_id: int, user: Owner, db: Session = Depends(get_db)
         raise HTTPException(
             status_code=409,
             detail={"code": "no_published_evaluation_rule"},
+        ) from error
+
+
+@router.post(
+    "/api/evaluations/{batch_id}/cancellation",
+    response_model=EvaluationBatchResponse,
+)
+def cancel_evaluation(
+    batch_id: int,
+    payload: EvaluationCancellationInput,
+    user: Owner,
+    db: Session = Depends(get_db),
+) -> EvaluationBatchResponse:
+    try:
+        batch = EvaluationService(db).cancel(batch_id, payload.reason, user.id)
+        db.commit()
+        return EvaluationBatchResponse.model_validate(batch)
+    except EvaluationBatchNotFound as error:
+        raise HTTPException(status_code=404, detail="Evaluation batch not found") from error
+    except EvaluationCancellationConflict as error:
+        raise HTTPException(
+            status_code=409, detail={"code": "evaluation_cancellation_conflict"}
         ) from error
 
 

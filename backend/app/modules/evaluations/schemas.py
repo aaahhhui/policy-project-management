@@ -87,6 +87,10 @@ class EvaluationConfirmationResponse(BaseModel):
     confirmed_at: datetime
 
 
+class EvaluationCancellationInput(BaseModel):
+    reason: str | None = Field(default=None, max_length=2000)
+
+
 class PrimaryEntityInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -135,6 +139,9 @@ class EvaluationBatchResponse(BaseModel):
     provider_request_id: str | None
     input_tokens: int | None
     output_tokens: int | None
+    cancelled_by: int | None
+    cancelled_at: datetime | None
+    cancel_reason: str | None
     profile_snapshot: list[dict[str, Any]]
     summary: str | None
     key_conditions: list[str] | None
@@ -143,4 +150,4 @@ class EvaluationBatchResponse(BaseModel):
     started_at: datetime | None
     finished_at: datetime | None
     created_at: datetime
-    entities: list[EntityEvaluationResponse]
+    entities: list[EntityEvaluationResponse] = Field(default_factory=list)
