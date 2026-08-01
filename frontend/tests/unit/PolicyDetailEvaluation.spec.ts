@@ -324,7 +324,7 @@ describe("PolicyDetailView evaluation", () => {
     expect(wrapper.text()).toContain("评估中");
   });
 
-  it("lets an owner cancel a pending evaluation without entering a reason and refreshes its state", async () => {
+  it("lets an owner cancel without a reason and shows the current batch as cancelled", async () => {
     currentUser.value = {
       id: 1, login_name: "owner", display_name: "Owner", roles: ["applicant_owner"],
     };
@@ -343,6 +343,8 @@ describe("PolicyDetailView evaluation", () => {
     expect(cancelEvaluation).toHaveBeenCalledWith(32, null);
     expect(getEvaluations).toHaveBeenCalledTimes(2);
     expect(wrapper.find("[role='dialog']").exists()).toBe(false);
+    expect(wrapper.text()).toContain("已取消");
+    expect(wrapper.text()).not.toContain("评估失败");
   });
 
   it("does not show the cancellation action to a reader", async () => {

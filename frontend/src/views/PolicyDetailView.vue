@@ -330,6 +330,13 @@ onMounted(async () => {
           <span class="state-marker" aria-hidden="true"></span>
           <div><h2>评估失败</h2><p>本次评估未生成有效结果。负责人可重新创建评估批次。</p></div>
         </div>
+        <div v-else-if="currentEvaluation.status === 'cancelled'" class="task-state cancelled" role="status">
+          <span class="state-marker" aria-hidden="true"></span>
+          <div>
+            <h2>已取消</h2>
+            <p>第 {{ attemptNumberById[currentEvaluation.id] }} 次评估 · 批次 #{{ currentEvaluation.id }} 已取消，不会继续运行。</p>
+          </div>
+        </div>
         <div v-if="canRetry && ['succeeded', 'awaiting_confirmation', 'confirmed', 'failed'].includes(currentEvaluation.status)" class="evaluation-actions">
           <button ref="retryButton" type="button" data-retry-evaluation @click="confirmRetryOpen = true">重新评估</button>
         </div>
