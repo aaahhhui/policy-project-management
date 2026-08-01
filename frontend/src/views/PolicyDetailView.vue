@@ -64,6 +64,11 @@ const attemptNumberById = computed<Record<number, number>>(() => Object.fromEntr
 const canRetry = computed(
   () => currentUser.value?.roles.includes("applicant_owner") ?? false,
 );
+const canRetryCurrent = computed(
+  () => canRetry.value
+    && currentEvaluation.value !== null
+    && ["succeeded", "awaiting_confirmation", "confirmed", "failed", "cancelled"].includes(currentEvaluation.value.status),
+);
 const confirmedConclusion = computed<PolicyConclusion | null>(() => {
   const value = policy.value?.current_conclusion;
   return value && value !== "pending_confirmation" ? value : null;
@@ -337,7 +342,7 @@ onMounted(async () => {
             <p>第 {{ attemptNumberById[currentEvaluation.id] }} 次评估 · 批次 #{{ currentEvaluation.id }} 已取消，不会继续运行。</p>
           </div>
         </div>
-        <div v-if="canRetry && ['succeeded', 'awaiting_confirmation', 'confirmed', 'failed'].includes(currentEvaluation.status)" class="evaluation-actions">
+        <div v-if="canRetryCurrent" class="evaluation-actions">
           <button ref="retryButton" type="button" data-retry-evaluation @click="confirmRetryOpen = true">重新评估</button>
         </div>
         <EvaluationHistory :evaluations="historicalEvaluations" :attempt-number-by-id="attemptNumberById" />

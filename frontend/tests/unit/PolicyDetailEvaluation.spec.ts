@@ -345,6 +345,21 @@ describe("PolicyDetailView evaluation", () => {
     expect(wrapper.find("[role='dialog']").exists()).toBe(false);
     expect(wrapper.text()).toContain("已取消");
     expect(wrapper.text()).not.toContain("评估失败");
+    expect(wrapper.get("[data-retry-evaluation]").text()).toBe("重新评估");
+  });
+
+  it("shows a cancelled batch to a reader without a retry action", async () => {
+    currentUser.value = {
+      id: 2, login_name: "reader", display_name: "Reader", roles: ["reader"],
+    };
+    vi.mocked(getEvaluations).mockResolvedValue([{
+      ...pending, status: "cancelled", finished_at: "2026-07-31T10:00:00Z",
+    }]);
+    const wrapper = mount(PolicyDetailView);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("已取消");
+    expect(wrapper.find("[data-retry-evaluation]").exists()).toBe(false);
   });
 
   it("does not show the cancellation action to a reader", async () => {
