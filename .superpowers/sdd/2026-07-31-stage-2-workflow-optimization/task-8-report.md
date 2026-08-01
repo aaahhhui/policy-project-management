@@ -4,13 +4,14 @@
 
 工作树：`C:\codex\testproduct\.worktrees\stage2-evaluation-decision-loop`
 
-状态：通过。自动回归、迁移恢复、8081 发布、安全扫描和控制器浏览器人工验收均已完成。
+状态：通过。自动回归、迁移恢复、官方审查修复、8081 发布、安全扫描和控制器浏览器人工验收 7/7 均已完成。
 
 ## 交付与提交
 
 - 迁移修复提交：`0851de8 fix: keep alembic revision within mysql limit`。
 - 结论时间戳修复提交：`16238d9 fix: add conclusion timestamp defaults`。
 - 取消态显示修复提交：`f447e51 fix: show current cancelled evaluation`。
+- 取消后重评修复提交：`7bba272 fix: allow retry after evaluation cancellation`。
 - 验收记录：本报告、smoke record 和 project memory 已按最终自动化、部署、审计与浏览器结果更新。
 
 ## 命令与结果
@@ -19,9 +20,9 @@
 
 1. `docker run --rm --mount "type=bind,source=C:\codex\testproduct\.worktrees\stage2-evaluation-decision-loop\backend,target=/app" stage2-evaluation-decision-loop-api pytest -q -p no:cacheprovider tests/unit/evaluations tests/integration/evaluations tests/integration/audit tests/integration/policies/test_routes.py tests/integration/test_stage2_schema.py`
    - 修复前：74 passed，13.97s。
-   - 迁移修复后 fresh run：75 passed，11.31s。
+   - 0004 revision 修复后的中间 run：75 passed，11.31s；加入 0005 回归后最终指定集合：76 passed。
 2. `node node_modules/vitest/vitest.mjs run`
-   - 18 files / 71 tests passed。
+   - 官方审查修复后 18 files / 72 tests passed。
 3. `node node_modules/vue-tsc/bin/vue-tsc.js -b --noEmit`
    - exit 0，无错误输出。
 4. `node node_modules/vite/bin/vite.js build`
@@ -75,10 +76,12 @@
    - MySQL、collector、evaluator、scheduler 为 healthy；API、web running；web 为 `0.0.0.0:8081->80/tcp`。
 3. 访问 `http://localhost:8081/` 与 `http://localhost:8081/api/health`
    - 根路径 HTTP 200；health JSON `status=ok`。
+4. `docker compose up -d --no-deps --build web`
+   - exit 0；最终 web 镜像包含 `7bba272`，新容器已切换并继续发布 8081。随后 fresh `docker compose ps`、0005 head、根路径与 health 检查全部通过。
 
 ## 审计检查
 
-- 最终现场只读计数：`evaluation_cancelled=1`、`evaluation_confirmed=3`、`policy_conclusion_changed=1`、`primary_entity_selected=1`、`primary_entity_changed=2`。
+- 最终现场只读计数：`evaluation_cancelled=1`、`evaluation_confirmed=4`、`policy_conclusion_changed=1`、`primary_entity_selected=2`、`primary_entity_changed=2`。
 - 对上述审计载荷执行只输出计数的敏感扫描：本地敏感值、Authorization 值、provider token 形态和私钥头均为 0 匹配。
 - 指定后端回归中的审计测试已通过：取消审计断言 actor/object/reason，并确认载荷排除 provider identifier、Authorization 和 API-key；结论调整单元测试断言 `policy_conclusion_changed`；确认与主企业集成测试断言事件顺序。
 
@@ -125,7 +128,8 @@
 ### 已通过的人工项
 
 - 3 秒轮询从评估中自动刷新到待确认。
-- 建议申报显示三候选且当前深圳主体已选；空理由被前端阻止，填写理由后一次确认成功，当前结论、负责人确认来源和追加历史正确。
+- 政策 16 的建议申报显示三候选且当前深圳主体已选；空理由被前端阻止，填写理由后一次确认成功，当前结论、负责人确认来源和追加历史正确。
+- 政策 17 没有当前主企业：重评轮询到待确认后，三候选均未选；先填写修改原因但不选企业提交，页面显示 alert“请选择主申报企业”且没有确认。随后选择深圳并一次确认成功，当前结论为建议申报、来源为负责人确认，历史包含原因。
 - 随后带理由调整为持续关注成功；负责人调整来源、时间、前后结论和历史正确。
 - 历史“第 N 次评估”和次要批次号正确。
 - reader 可见结论来源、时间和历史；调整、确认、重评、取消、主企业写入口均为 0。
@@ -136,17 +140,18 @@
 - 根因：最新 cancelled 批次作为 `currentEvaluation` 被 `historicalEvaluations = evaluations.slice(1)` 排除；current 区域只渲染 active/success/failed，没有 cancelled 分支。
 - RED：将现有取消行为测试扩展为取消后必须看到“已取消”且不得看到“评估失败”；聚焦文件 1 failed / 17 passed。
 - GREEN：增加 current cancelled 状态卡，明确显示“已取消”和“第 N 次评估 · 批次 #ID”；聚焦文件 18/18 passed。
-- 完整前端：18 files / 71 tests passed；Vue TypeScript 与 Vite build exit 0，仅既有允许警告。
+- 当时完整前端：18 files / 71 tests passed；Vue TypeScript 与 Vite build exit 0，仅既有允许警告。
 - 修复提交：`f447e51 fix: show current cancelled evaluation`。web 已重建并在 8081 发布。
 - 最终人工复验 PASS：政策 16 当前评估区域显示 heading“已取消”，文案“第 7 次评估 · 批次 #26 已取消，不会继续运行。”，没有“评估失败”；reader 会话同样可见。
+- 官方审查发现取消后负责人没有“重新评估”入口。TDD RED 为聚焦文件 1 failed / 18 passed；将 `cancelled` 纳入 `canRetryCurrent` 后 GREEN 为 19/19 passed，并新增 reader 在取消态仍无重评入口的断言。完整前端为 18 files / 72 tests，typecheck/build 退出 0。修复已重建 web 并发布到 8081。
 
-## 浏览器人工验收：通过
+## 浏览器人工验收：7/7 通过
 
-目标：`http://localhost:8081/policies/16`。
+目标：`http://localhost:8081/policies/16` 与 `http://localhost:8081/policies/17`。
 
 1. 新评估从等待/评估中自动刷新到待确认。
 2. 新批次可无原因取消并显示“已取消”。
-3. 确认“建议申报”必须选择企业，并一次成功。
+3. 政策 17 无当前主企业时，确认“建议申报”必须选择企业：未选择提交被 alert“请选择主申报企业”阻止，选择深圳后一次确认成功。
 4. 已确认后调整结论必须填写原因。
 5. 结论来源、时间和历史正确。
 6. 只读账号无写操作入口。
@@ -174,6 +179,6 @@
 
 ## Concerns
 
-- 浏览器人工清单与现场审计已完成，无未完成人工项。
+- 浏览器 7 项与官方审查修复均已完成，`7bba272` 已发布，无未完成人工项。
 - 后端 Dockerfile 的 COPY/依赖安装层次导致任意源码变化重新安装完整 dev 依赖，本轮最终构建约 412 秒；非阻断，本任务不扩大为构建优化。
 - 完整迁移名称测试的既有同名 constraint 问题继续按 ledger 延期，不影响本轮实际 MySQL 0004→0005 upgrade 和 8081 health 结果。

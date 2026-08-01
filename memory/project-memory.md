@@ -364,12 +364,12 @@
 ## 23. 2026-08-01 Stage 2 流程优化自动验收基线
 
 - 流程优化已实现自动轮询、主动取消与“已取消”状态、友好评估序号、规则错误中文映射、确认时主企业校验、独立政策结论调整、结论来源/时间/追加历史以及只读权限控制。
-- Task 8 自动回归：后端指定集合 76 项通过；前端 18 个测试文件、71 项通过；Vue TypeScript 与 Vite 生产构建退出 0。Vite 仅保留既有第三方 PURE 注释和大 chunk 警告。
+- Task 8 自动回归：后端指定集合 76 项通过；官方审查修复后前端 18 个测试文件、72 项通过；Vue TypeScript 与 Vite 生产构建退出 0。Vite 仅保留既有第三方 PURE 注释和大 chunk 警告。
 - MySQL 最新迁移为 `0005_decision_timestamps`。0004 revision 超过 MySQL Alembic 版本列 32 字符限制的问题已用 TDD 缩短并提交为 `0851de8`；部分非事务 DDL 经安全恢复后完整回填。控制器首次结论调整 POST 500 又暴露 0004 的结论决策时间列缺少 server default；已通过后续 0005 增加与 `TimestampMixin` 一致的 `CURRENT_TIMESTAMP`，修复提交为 `16238d9`。
 - 8081 发布状态：MySQL、collector、evaluator、scheduler healthy，API 与 web running；根路径为 HTTP 200，`/api/health` 返回 `status=ok`。
 - 安全扫描：Git 跟踪文件中的真实 provider key、Authorization 值、provider token 形态和私钥头均为 0；Compose 日志中的本地敏感值、Authorization 值、provider token 形态和私钥头均为 0。Git 中 8 个基础设施值命中仅属于 `.env.example`/文档公开默认值。
-- 最终现场审计事件计数：取消 1、负责人确认 3、结论调整 1、主企业首次选择 1、切换 2；审计载荷的本地敏感值、Authorization 值、provider token 形态和私钥头均为 0 匹配。
-- 浏览器人工验收 7 项全部通过：自动轮询、无原因取消与“已取消”显示、建议申报候选/当前主体/理由校验及一次确认、带理由结论调整、来源/时间/历史、友好评估编号、reader 全部无写入口。取消显示缺陷已用 TDD 修复并提交为 `f447e51`；最终复验确认政策 16 显示“第 7 次评估 · 批次 #26 已取消，不会继续运行。”且不显示“评估失败”，reader 也可见。
+- 最终现场审计事件计数：取消 1、负责人确认 4、结论调整 1、主企业首次选择 2、切换 2；65 条审计载荷的本地敏感值、Authorization 值、provider token 形态和私钥头均为 0 匹配。
+- 浏览器人工验收 7/7 通过。政策 17 无当前主企业：重评轮询到待确认后三候选均未选；填写原因但不选企业时被 alert“请选择主申报企业”阻止，选择深圳后一次确认成功，当前结论、负责人确认来源和含原因历史正确。取消显示缺陷已提交为 `f447e51`；官方审查发现取消后缺少重评入口，已用 TDD 将 `cancelled` 纳入 `canRetryCurrent` 并提交为 `7bba272`，reader 仍无入口。
 - 仍保留的 ledger minor：取消状态 constraint 缺少显式迁移断言；取消输入未 `extra=forbid`；安全审计测试未注入代表性 Authorization/API-key 值；结论审计断言未覆盖 actor 与完整 changes；结论路由成功响应未断言完整契约；完整迁移名称测试仍受跨迁移复用 `evaluation_status_v2_code` 的既有问题影响；未知/畸形错误回退缺少直接自动化；主企业与结论历史请求失败仍静默降级为空状态。
 - 已在 Task 7 收口、不再延期的两项：取消失败 fallback 已改为中文；取消弹窗焦点环已包含可选原因 textarea。
-- 最终发布镜像已包含 `0005_decision_timestamps` 与 `f447e51`；MySQL、collector、evaluator、scheduler healthy，API/web running，8081 health 为 `ok`。后端 Dockerfile 在任意源码变化后重新安装完整 dev 依赖，0005 首次重建曾在 604 秒工具时限处超时，缓存重试后成功；本任务不扩大为无关构建优化。
+- 最终发布版本已包含 `0005_decision_timestamps`、`f447e51` 与 `7bba272`；仅重建 web 后 fresh 状态为 MySQL、collector、evaluator、scheduler healthy，API/web running，0005 head，8081 根路径 200、health `ok`。后端 Dockerfile 在任意源码变化后重新安装完整 dev 依赖，0005 首次重建曾在 604 秒工具时限处超时，缓存重试后成功；本任务不扩大为无关构建优化。

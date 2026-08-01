@@ -110,13 +110,13 @@ Stage 1 Demo 正占用宿主机 8080，因此未同时发布 Stage 2 web 的宿�
 
 ## 2026-08-01 Stage 2 流程优化自动验收与 8081 发布
 
-状态：通过。自动回归、MySQL 迁移、8081 发布、脱敏安全扫描和控制器浏览器人工验收均已完成。
+状态：通过。自动回归、MySQL 迁移、官方审查修复、8081 发布、脱敏安全扫描和控制器浏览器人工验收 7/7 均已完成。
 
 ### 自动验证
 
 - 被测代码修复提交：`0851de8`（将 Alembic revision 缩短到 MySQL `alembic_version.version_num` 的 32 字符边界内，并增加边界回归测试）。
-- 后端 Task 8 指定集合：75 项通过。
-- 前端 Vitest：18 个测试文件、71 项通过。
+- 后端 Task 8 指定集合：最终 76 项通过；75 项是 0004 revision 修复后、加入 0005 回归前的中间结果。
+- 前端 Vitest：官方审查修复后 18 个测试文件、72 项通过。
 - Vue TypeScript：`vue-tsc -b --noEmit` 退出 0。
 - Vite 生产构建：退出 0；仅出现既有第三方 `@vueuse/core` PURE 注释位置和主 chunk 超过 500 kB 警告。
 
@@ -132,18 +132,19 @@ Stage 1 Demo 正占用宿主机 8080，因此未同时发布 Stage 2 web 的宿�
 - 仅重建并切换 API、evaluator 和 web；web 使用 `docker compose up -d --no-deps --build web`，继续发布 `0.0.0.0:8081->80/tcp`。
 - 最终 Compose 状态：MySQL、collector、evaluator、scheduler 为 `running|healthy`；API、web 为 `running`。
 - `http://localhost:8081/` 返回 200；`http://localhost:8081/api/health` 返回 JSON `status=ok`。
+- 最终仅重建 web 发布 `7bba272`；fresh `docker compose ps`、`0005_decision_timestamps (head)`、8081 根路径与 health 检查全部通过。
 - 后端镜像在源码变化后会重新执行完整 dev 依赖安装，本轮最终重建耗时约 412 秒；这是非阻断的构建缓存粒度关注项。
 
 ### 审计与安全
 
-- 最终现场审计计数：`evaluation_cancelled=1`、`evaluation_confirmed=3`、`policy_conclusion_changed=1`、`primary_entity_selected=1`、`primary_entity_changed=2`。审计载荷中的本地敏感值、Authorization 值、provider token 形态和私钥头均为 0 匹配。
+- 最终现场审计计数：`evaluation_cancelled=1`、`evaluation_confirmed=4`、`policy_conclusion_changed=1`、`primary_entity_selected=2`、`primary_entity_changed=2`。65 条审计载荷中的本地敏感值、Authorization 值、provider token 形态和私钥头均为 0 匹配。
 - 自动化测试已覆盖 `evaluation_cancelled`（同时断言审计载荷排除凭据和 provider identifier）与 `policy_conclusion_changed`；自动化通过不替代现场人工操作。
 - 扫描 231 个 Git 跟踪文件：真实 provider key 精确匹配 0、Authorization 值 0、provider token 形态 0、私钥头 0。基础设施变量有 8 个精确匹配，仅位于 `.example` 和 `.md`，逐键确认均等于公开示例默认值。
 - 扫描 6 个 Compose 服务、约 9.1 万字符日志：本地敏感值精确匹配、Authorization 值、provider token 形态和私钥头均为 0。扫描只输出计数和文件类型，没有输出匹配行或任何 secret 值。
 
 ### 控制器浏览器人工验收清单
 
-入口：`http://localhost:8081/policies/16`。
+入口：`http://localhost:8081/policies/16` 与 `http://localhost:8081/policies/17`。
 
 1. 新评估从等待/评估中自动刷新到待确认。
 2. 新批次可无原因取消并显示“已取消”。
@@ -153,7 +154,7 @@ Stage 1 Demo 正占用宿主机 8080，因此未同时发布 Stage 2 web 的宿�
 6. 只读账号无写操作入口。
 7. 历史显示“第 N 次评估”和次要批次号。
 
-人工状态：7 项全部通过；具体操作证据和期间阻塞修复见下文。
+人工状态：7 项全部通过。
 
 ### 控制器首次人工验收阻塞与 0005 修复
 
@@ -167,10 +168,12 @@ Stage 1 Demo 正占用宿主机 8080，因此未同时发布 Stage 2 web 的宿�
 ### 控制器浏览器复验结果与取消显示修复
 
 - PASS：3 秒轮询将评估中自动刷新到待确认。
-- PASS：建议申报显示三家候选并预选当前深圳主体；空理由被前端阻止，填写理由后一次确认成功。当前结论为建议申报，来源为负责人确认，历史新增正确。
+- PASS：政策 16 建议申报显示三家候选并预选当前深圳主体；空理由被前端阻止，填写理由后一次确认成功，当前结论、来源和历史正确。
+- PASS：政策 17 无当前主企业；创建重评并轮询到待确认后，三候选均未选。先填修改原因但不选企业提交，页面 alert“请选择主申报企业”且未确认；选择深圳后一次确认成功，当前结论建议申报、来源负责人确认，历史包含原因。
 - PASS：随后带理由调整为持续关注成功；来源更新为负责人调整，时间、前后结论和追加历史正确。
 - PASS：历史显示“第 N 次评估”和次要批次号。
 - PASS：只读 reader 可见结论来源、时间和历史；调整、确认、重评、取消和主企业写入口均为 0。
 - 首次 FAIL：控制器暂停 evaluator 后创建新批次并无理由取消；API/UI 操作完成且取消按钮消失，但最新 cancelled 批次既被排除出历史，又没有 current cancelled 渲染，页面完全看不到“已取消”。evaluator 随后已恢复。
-- TDD 修复：现有浏览器行为测试新增“取消后必须显示已取消且不得显示评估失败”断言，修复前聚焦测试 1 failed / 17 passed；新增 current cancelled 状态卡后 18/18 passed。卡片同时显示“第 N 次评估 · 批次 #ID”。完整前端仍为 18 files / 71 tests，typecheck/build 退出 0。
+- TDD 修复：现有浏览器行为测试新增“取消后必须显示已取消且不得显示评估失败”断言，修复前聚焦测试 1 failed / 17 passed；新增 current cancelled 状态卡后 18/18 passed。卡片同时显示“第 N 次评估 · 批次 #ID”。当时完整前端为 18 files / 71 tests，typecheck/build 退出 0。
 - 前端修复提交：`f447e51 fix: show current cancelled evaluation`；web 已重建并发布。控制器最终复验 PASS：政策 16 当前评估显示“已取消”，文案为“第 7 次评估 · 批次 #26 已取消，不会继续运行。”，未显示“评估失败”；reader 会话也可见。
+- 官方审查又发现取消后负责人没有“重新评估”入口。新增 owner/reader 断言后 RED 为聚焦文件 1 failed / 18 passed；将 `cancelled` 纳入 `canRetryCurrent` 后 GREEN 为 19/19 passed，完整前端为 18 files / 72 tests，typecheck/build 退出 0。修复提交为 `7bba272`，已重建 web 并发布到 8081。
