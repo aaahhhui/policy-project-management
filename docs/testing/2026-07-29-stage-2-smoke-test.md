@@ -107,3 +107,50 @@ Stage 1 Demo 正占用宿主机 8080，因此未同时发布 Stage 2 web 的宿�
 - Vite 生产构建：通过；仅保留第三方 PURE 注释位置和主包超过 500 kB 的既有警告。
 - `http://localhost:8081/api/health`：`status=ok`。
 - MySQL、collector、evaluator、scheduler：运行且健康；API 与 web：运行。
+
+## 2026-08-01 Stage 2 流程优化自动验收与 8081 发布
+
+状态：自动回归、MySQL 迁移、8081 发布和脱敏安全扫描通过；浏览器人工验收待控制器执行，本文不将人工项记为通过。
+
+### 自动验证
+
+- 被测代码修复提交：`0851de8`（将 Alembic revision 缩短到 MySQL `alembic_version.version_num` 的 32 字符边界内，并增加边界回归测试）。
+- 后端 Task 8 指定集合：75 项通过。
+- 前端 Vitest：18 个测试文件、71 项通过。
+- Vue TypeScript：`vue-tsc -b --noEmit` 退出 0。
+- Vite 生产构建：退出 0；仅出现既有第三方 `@vueuse/core` PURE 注释位置和主 chunk 超过 500 kB 警告。
+
+### MySQL 迁移与恢复记录
+
+- 首次用发布前 API 镜像执行 `alembic upgrade head` 只看到旧 head `0003_expand_evaluation_status`；新镜像执行 0004 时发现 revision `0004_stage2_workflow_optimization` 超过 MySQL 默认 32 字符版本列，DDL 已提交而版本行更新失败，evaluator 因 schema 与代码不一致而重启。
+- 已按 TDD 修复为 `0004_workflow_optimization`：新增边界测试先失败、修复后通过。
+- 只读检查确认部分迁移的新表/字段没有运行时写入后，执行 `stamp 0004_workflow_optimization → downgrade 0003_expand_evaluation_status → upgrade head`，三步均退出 0；避免在非事务 MySQL DDL 上盲目重复创建对象。
+- 最终 `alembic current` 为 `0004_workflow_optimization (head)`；2 条既有确认记录回填为 2 条 `evaluation_confirmation` 结论决策。
+
+### 部署状态
+
+- 仅重建并切换 API、evaluator 和 web；web 使用 `docker compose up -d --no-deps --build web`，继续发布 `0.0.0.0:8081->80/tcp`。
+- 最终 Compose 状态：MySQL、collector、evaluator、scheduler 为 `running|healthy`；API、web 为 `running`。
+- `http://localhost:8081/` 返回 200；`http://localhost:8081/api/health` 返回 JSON `status=ok`。
+- 后端镜像在源码变化后会重新执行完整 dev 依赖安装，本轮最终重建耗时约 412 秒；这是非阻断的构建缓存粒度关注项。
+
+### 审计与安全
+
+- 已部署数据库现有审计计数：`evaluation_confirmed=2`、`primary_entity_selected=1`、`primary_entity_changed=2`；控制器尚未在本轮人工触发取消和结论调整，因此这两类现场事件待人工验收后复核。
+- 自动化测试已覆盖 `evaluation_cancelled`（同时断言审计载荷排除凭据和 provider identifier）与 `policy_conclusion_changed`；自动化通过不替代现场人工操作。
+- 扫描 229 个 Git 跟踪文件：真实 provider key 精确匹配 0、Authorization 值 0、provider token 形态 0、私钥头 0。基础设施变量有 8 个精确匹配，仅位于 `.example` 和 `.md`，逐键确认均等于公开示例默认值。
+- 扫描 6 个 Compose 服务、约 9.1 万字符日志：本地敏感值精确匹配、Authorization 值、provider token 形态和私钥头均为 0。扫描只输出计数和文件类型，没有输出匹配行或任何 secret 值。
+
+### 待控制器执行的浏览器人工验收
+
+入口：`http://localhost:8081/policies/16`。
+
+1. 新评估从等待/评估中自动刷新到待确认。
+2. 新批次可无原因取消并显示“已取消”。
+3. 确认“建议申报”必须选择企业，并一次成功。
+4. 已确认后调整结论必须填写原因。
+5. 结论来源、时间和历史正确。
+6. 只读账号无写操作入口。
+7. 历史显示“第 N 次评估”和次要批次号。
+
+人工状态：待控制器执行；尤其需要在取消和结论调整后复核现场审计事件。
