@@ -4,10 +4,18 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import Connection, Inspector, create_engine, inspect, text
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import get_settings
+
+
+def test_alembic_revision_ids_fit_mysql_version_column() -> None:
+    config = Config(str(Path(__file__).parents[2] / "alembic.ini"))
+    revisions = ScriptDirectory.from_config(config).walk_revisions()
+
+    assert all(len(revision.revision) <= 32 for revision in revisions)
 
 
 @pytest.fixture

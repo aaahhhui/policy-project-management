@@ -1,6 +1,6 @@
 """stage two workflow optimization schema
 
-Revision ID: 0004_stage2_workflow_optimization
+Revision ID: 0004_workflow_optimization
 Revises: 0003_expand_evaluation_status
 Create Date: 2026-07-31
 """
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision: str = "0004_stage2_workflow_optimization"
+revision: str = "0004_workflow_optimization"
 down_revision: str | None = "0003_expand_evaluation_status"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
