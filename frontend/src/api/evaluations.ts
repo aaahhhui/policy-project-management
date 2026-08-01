@@ -57,6 +57,7 @@ export interface EvaluationConfirmationInput {
   key_conditions: string[];
   entities: EntityEvaluation[];
   change_reason: string | null;
+  primary_entity_seed_code: string | null;
 }
 
 export interface PrimaryEntityDecision {

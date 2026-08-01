@@ -11,11 +11,21 @@ import {
   type PrimaryEntityDecision,
 } from "../api/evaluations";
 import { useEvaluationPolling } from "../composables/useEvaluationPolling";
-import { getPolicy, getPolicyVersions, type PolicyDetail, type PolicyVersion } from "../api/policies";
+import {
+  getPolicy,
+  getPolicyConclusionHistory,
+  getPolicyVersions,
+  type PolicyConclusion,
+  type PolicyConclusionDecision,
+  type PolicyDetail,
+  type PolicyVersion,
+} from "../api/policies";
 import { currentUser } from "../auth/state";
 import EvaluationHistory from "../components/evaluations/EvaluationHistory.vue";
 import EvaluationSummary from "../components/evaluations/EvaluationSummary.vue";
 import EvaluationConfirmationForm from "../components/evaluations/EvaluationConfirmationForm.vue";
+import PolicyConclusionDecisionForm from "../components/evaluations/PolicyConclusionDecisionForm.vue";
+import PolicyConclusionHistory from "../components/evaluations/PolicyConclusionHistory.vue";
 import PrimaryEntitySelector from "../components/evaluations/PrimaryEntitySelector.vue";
 import AttachmentList from "../components/policies/AttachmentList.vue";
 import ConclusionBadge from "../components/policies/ConclusionBadge.vue";
@@ -30,6 +40,8 @@ const error = ref("");
 const evaluationError = ref("");
 const evaluationLoading = ref(true);
 const primaryEntity = ref<PrimaryEntityDecision | null>(null);
+const conclusionHistory = ref<PolicyConclusionDecision[]>([]);
+const conclusionDecisionOpen = ref(false);
 const confirmRetryOpen = ref(false);
 const retrying = ref(false);
 const cancelOpen = ref(false);
@@ -51,6 +63,21 @@ const attemptNumberById = computed<Record<number, number>>(() => Object.fromEntr
 const canRetry = computed(
   () => currentUser.value?.roles.includes("applicant_owner") ?? false,
 );
+const confirmedConclusion = computed<PolicyConclusion | null>(() => {
+  const value = policy.value?.current_conclusion;
+  return value && value !== "pending_confirmation" ? value : null;
+});
+const conclusionLabels: Record<string, string> = {
+  recommend_apply: "建议申报",
+  watch: "持续关注",
+  not_recommended: "暂不建议申报",
+  uncertain: "无法判断",
+};
+const sourceLabels: Record<string, string> = {
+  evaluation_confirmation: "负责人确认",
+  manual_override: "负责人调整",
+  system_suggestion: "系统建议",
+};
 const isEvaluationActive = computed(
   () => currentEvaluation.value !== null && ["pending", "running"].includes(currentEvaluation.value.status),
 );
@@ -77,6 +104,25 @@ async function refreshPrimaryEntity(id: number): Promise<void> {
   } catch {
     primaryEntity.value = null;
   }
+}
+
+async function refreshConclusionHistory(id: number): Promise<void> {
+  try {
+    conclusionHistory.value = await getPolicyConclusionHistory(id);
+  } catch {
+    conclusionHistory.value = [];
+  }
+}
+
+async function refreshConclusionState(id: number): Promise<void> {
+  const [updatedPolicy] = await Promise.all([
+    getPolicy(id),
+    refreshEvaluations(id),
+    refreshPrimaryEntity(id),
+    refreshConclusionHistory(id),
+  ]);
+  policy.value = updatedPolicy;
+  conclusionDecisionOpen.value = false;
 }
 
 async function confirmRetry(): Promise<void> {
@@ -110,7 +156,7 @@ async function confirmCancellation(): Promise<void> {
     cancelReason.value = "";
     await refreshEvaluations(policy.value.id);
   } catch {
-    evaluationError.value = "Unable to cancel this evaluation. Please try again.";
+    evaluationError.value = "无法取消本次评估，请稍后重试。";
   } finally {
     cancelling.value = false;
   }
@@ -157,16 +203,16 @@ function handleCancelDialogKeydown(event: KeyboardEvent): void {
     return;
   }
   if (event.key !== "Tab" || !cancelDialog.value) return;
-  const buttons = Array.from(
-    cancelDialog.value.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"),
+  const focusable = Array.from(
+    cancelDialog.value.querySelectorAll<HTMLElement>("textarea:not(:disabled), button:not(:disabled)"),
   );
-  if (!buttons.length) {
+  if (!focusable.length) {
     event.preventDefault();
     cancelDialog.value.focus();
     return;
   }
-  const first = buttons[0];
-  const last = buttons[buttons.length - 1];
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
   if (event.shiftKey && document.activeElement === first) {
     event.preventDefault();
     last.focus();
@@ -205,6 +251,7 @@ onMounted(async () => {
     [policy.value, versions.value] = await Promise.all([getPolicy(id), getPolicyVersions(id)]);
     void refreshEvaluations(id);
     void refreshPrimaryEntity(id);
+    void refreshConclusionHistory(id);
   }
   catch { error.value = "无法加载政策详情。请返回政策中心后重试。"; }
   finally { loading.value = false; }
@@ -219,6 +266,24 @@ onMounted(async () => {
       <div><p class="eyebrow">政策档案 · 当前版本 {{ policy.current_version.version_number }}</p><h1>{{ policy.title }}</h1><p v-if="policy.document_number">{{ policy.document_number }}</p></div>
       <ConclusionBadge :conclusion="policy.current_conclusion" :confirmed="policy.conclusion_confirmed" />
     </header>
+    <section v-if="policy.conclusion_confirmed && confirmedConclusion" data-conclusion-metadata class="conclusion-metadata" aria-label="当前政策结论">
+      <dl>
+        <div><dt>当前结论：</dt><dd>{{ conclusionLabels[confirmedConclusion] }}</dd></div>
+        <div><dt>来源：</dt><dd>{{ sourceLabels[policy.current_conclusion_source] }}</dd></div>
+        <div><dt>确认时间：</dt><dd>{{ policy.conclusion_confirmed_at ? formatTime(policy.conclusion_confirmed_at) : "未注明" }}</dd></div>
+      </dl>
+      <button v-if="canRetry" type="button" data-open-conclusion-decision @click="conclusionDecisionOpen = !conclusionDecisionOpen">
+        {{ conclusionDecisionOpen ? "收起调整" : "调整政策结论" }}
+      </button>
+      <PolicyConclusionDecisionForm
+        v-if="canRetry && conclusionDecisionOpen"
+        :policy-id="policy.id"
+        :current-conclusion="confirmedConclusion"
+        :has-primary-entity="primaryEntity !== null"
+        @decided="refreshConclusionState(policy.id)"
+      />
+      <PolicyConclusionHistory :decisions="conclusionHistory" />
+    </section>
     <section class="facts" aria-label="政策日期与来源">
       <dl><div><dt>发布日期</dt><dd>{{ formatDate(policy.published_on) }}</dd></div><div><dt>申报截止日期</dt><dd>{{ formatDate(policy.deadline_on) }}</dd></div><div><dt>采集时间</dt><dd>{{ formatTime(policy.current_version.collected_at) }}</dd></div></dl>
       <ul><li v-for="discovery in policy.discoveries" :key="discovery.id"><strong>{{ discovery.source_name }} · {{ discovery.channel_name }}</strong><a :href="discovery.original_url" target="_blank" rel="noreferrer">查看官方原文</a></li></ul>
@@ -236,7 +301,7 @@ onMounted(async () => {
         <EvaluationConfirmationForm
           v-if="canRetry && currentEvaluation.status === 'awaiting_confirmation'"
           :evaluation="currentEvaluation"
-          @confirmed="refreshEvaluations(Number(route.params.id))"
+          @confirmed="refreshConclusionState(Number(route.params.id))"
         />
         <PrimaryEntitySelector
           v-if="canRetry && currentEvaluation.status === 'confirmed' && policy"
@@ -297,4 +362,5 @@ onMounted(async () => {
 
 <style scoped>
 .policy-detail { max-width: 68rem; margin: 0 auto; color: #1b3352; }.policy-title { display: flex; align-items: start; justify-content: space-between; gap: 2rem; padding-bottom: 1.35rem; border-bottom: 3px solid #1e568c; }.eyebrow { margin: 0 0 .45rem; color: #6a7e95; font-size: .75rem; font-weight: 800; letter-spacing: .09em; }.policy-title h1 { max-width: 48rem; margin: 0; font: 700 clamp(1.8rem, 4vw, 2.65rem)/1.25 "Noto Serif SC", "Songti SC", serif; }.policy-title p:last-child { color: #60758d; }.facts, .document, .files, .evaluation-panel { margin-top: 1.5rem; padding: 1.2rem 1.35rem; border: 1px solid #d8e2ec; background: #fff; }.facts dl { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin: 0 0 1rem; }.facts dl div { padding-left: .75rem; border-left: 3px solid #d3a747; }.facts dt { color: #6a7e95; font-size: .75rem; }.facts dd { margin: .3rem 0 0; font-weight: 700; }.facts ul { margin: 0; padding: 0; list-style: none; }.facts li { display: flex; justify-content: space-between; gap: 1rem; padding-top: .8rem; border-top: 1px solid #e3ebf3; }.facts a, .snapshot { color: #14558c; }.document h2, .files > h2, .task-state h2 { margin-top: 0; font: 700 1.2rem/1.4 "Noto Serif SC", "Songti SC", serif; }.body-text { color: #293f58; line-height: 1.9; white-space: pre-wrap; }.task-state { display: flex; align-items: start; gap: .9rem; color: #536b82; }.task-state h2 { margin-bottom: .25rem; }.task-state p { margin: 0; }.state-marker { width: .7rem; height: .7rem; margin-top: .35rem; border: 2px solid #49769a; border-radius: 50%; box-shadow: 0 0 0 4px #e8f0f6; }.failed .state-marker { border-color: #a95345; box-shadow: 0 0 0 4px #faece9; }.evaluation-actions { display: flex; justify-content: flex-end; margin-top: 1rem; }.evaluation-actions button, .confirm-dialog button { padding: .58rem .9rem; color: #fff; border: 1px solid #174f7e; background: #174f7e; font: inherit; font-size: .82rem; font-weight: 800; cursor: pointer; }.evaluation-error, .error { padding: 1rem; color: #9b1c1c; background: #fff1f0; }.dialog-backdrop { position: fixed; z-index: 20; inset: 0; display: grid; place-items: center; padding: 1rem; background: rgb(15 33 50 / 48%); }.confirm-dialog { width: min(28rem, 100%); margin: 0; padding: 1.35rem; border: 0; background: #fff; box-shadow: 0 1.5rem 4rem rgb(8 27 45 / 30%); }.confirm-dialog h2 { margin: 0; font: 700 1.35rem/1.35 "Noto Serif SC", "Songti SC", serif; }.confirm-dialog > p:not(.eyebrow) { color: #536b82; line-height: 1.65; }.confirm-dialog > div { display: flex; justify-content: flex-end; gap: .6rem; margin-top: 1.25rem; }.confirm-dialog button.secondary { color: #315671; border-color: #bdcad5; background: #fff; }.confirm-dialog button:disabled { cursor: wait; opacity: .65; }@media (max-width: 700px) { .policy-title { flex-direction: column; }.facts dl { grid-template-columns: 1fr; }.facts li { align-items: start; flex-direction: column; } }
+.conclusion-metadata{margin-top:1rem;padding:1rem 1.35rem;border-left:4px solid #174f7e;background:#eef5fa}.conclusion-metadata dl{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin:0}.conclusion-metadata dt{color:#60758d;font-size:.75rem}.conclusion-metadata dd{margin:.25rem 0 0;font-weight:800}.conclusion-metadata>button{margin-top:1rem;padding:.55rem .85rem;color:#174f7e;border:1px solid #174f7e;background:#fff;font:inherit;font-weight:800}@media(max-width:700px){.conclusion-metadata dl{grid-template-columns:1fr}}
 </style>

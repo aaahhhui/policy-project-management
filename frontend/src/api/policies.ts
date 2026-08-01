@@ -1,9 +1,12 @@
 import http from "./http";
 
+export type PolicyConclusion = "recommend_apply" | "watch" | "not_recommended" | "uncertain";
+export type PolicyCurrentConclusion = PolicyConclusion | "pending_confirmation";
+
 export interface PolicyListItem {
   id: number; title: string; document_number: string | null;
   published_on: string | null; deadline_on: string | null;
-  current_conclusion: string; conclusion_confirmed: boolean; sources: string[];
+  current_conclusion: PolicyCurrentConclusion; conclusion_confirmed: boolean; sources: string[];
 }
 export interface PolicyPage { items: PolicyListItem[]; page: number; page_size: number; total: number; }
 export interface SourceOption { id: number; name: string; }
@@ -22,11 +25,12 @@ export interface PolicyAttachment {
 export interface PolicyDetail {
   id: number; title: string; document_number: string | null;
   published_on: string | null; deadline_on: string | null;
-  current_conclusion: string; conclusion_confirmed: boolean;
+  current_conclusion: PolicyCurrentConclusion; conclusion_confirmed: boolean;
+  current_conclusion_source: "system_suggestion" | "evaluation_confirmation" | "manual_override";
+  conclusion_confirmed_at: string | null;
   current_evaluation_batch_id: number | null; current_version: PolicyVersion;
   discoveries: PolicyDiscovery[]; attachments: PolicyAttachment[];
 }
-export type PolicyConclusion = "recommend_apply" | "watch" | "not_recommended" | "uncertain";
 export interface PolicyConclusionDecision {
   id: number; policy_id: number; evaluation_batch_id: number;
   previous_conclusion: PolicyConclusion; conclusion: PolicyConclusion;

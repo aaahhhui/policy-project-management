@@ -1,13 +1,13 @@
 <script setup lang="ts">
 const props = defineProps<{ conclusion: string; confirmed: boolean }>();
-const labels: Record<string, string> = {
+const labels: Readonly<Record<string, string>> = {
   pending_confirmation: "待确认", recommend_apply: "建议申报", watch: "持续关注",
   not_recommended: "暂不建议申报", uncertain: "无法判断",
 };
 </script>
 
 <template>
-  <span data-conclusion :class="['conclusion-badge', { weak: !props.confirmed }]">
+  <span data-conclusion :aria-label="`政策结论：${labels[props.conclusion] ?? props.conclusion}`" :class="['conclusion-badge', { weak: !props.confirmed }]">
     {{ labels[props.conclusion] ?? props.conclusion }}
   </span>
 </template>

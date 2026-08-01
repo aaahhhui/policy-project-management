@@ -10,7 +10,12 @@ import {
   type EntityEvaluation,
   type EvaluationBatch,
 } from "../../src/api/evaluations";
-import { getPolicy, getPolicyVersions } from "../../src/api/policies";
+import {
+  getPolicy,
+  getPolicyConclusionHistory,
+  getPolicyVersions,
+  type PolicyDetail,
+} from "../../src/api/policies";
 import { currentUser } from "../../src/auth/state";
 import PolicyDetailView from "../../src/views/PolicyDetailView.vue";
 
@@ -18,6 +23,8 @@ vi.mock("vue-router", () => ({ useRoute: () => ({ params: { id: "8" } }) }));
 vi.mock("../../src/api/policies", () => ({
   getPolicy: vi.fn(),
   getPolicyVersions: vi.fn(),
+  getPolicyConclusionHistory: vi.fn(),
+  adjustPolicyConclusion: vi.fn(),
 }));
 vi.mock("../../src/api/evaluations", () => ({
   getEvaluations: vi.fn(),
@@ -27,7 +34,7 @@ vi.mock("../../src/api/evaluations", () => ({
   selectPrimaryEntity: vi.fn(),
 }));
 
-const policy = {
+const policy: PolicyDetail = {
   id: 8,
   title: "制造业数字化转型项目申报通知",
   document_number: "粤工信〔2026〕8号",
@@ -35,6 +42,8 @@ const policy = {
   deadline_on: "2026-08-20",
   current_conclusion: "recommend_apply",
   conclusion_confirmed: false,
+  current_conclusion_source: "system_suggestion",
+  conclusion_confirmed_at: null,
   current_evaluation_batch_id: 31,
   current_version: {
     id: 12,
@@ -95,6 +104,7 @@ beforeEach(() => {
   vi.mocked(getPolicy).mockResolvedValue(policy);
   vi.mocked(getPolicyVersions).mockResolvedValue([policy.current_version]);
   vi.mocked(getPrimaryEntityHistory).mockResolvedValue([]);
+  vi.mocked(getPolicyConclusionHistory).mockResolvedValue([]);
 });
 
 describe("PolicyDetailView evaluation", () => {
@@ -297,17 +307,106 @@ describe("PolicyDetailView evaluation", () => {
     const dialog = wrapper.get<HTMLElement>("[role='dialog']");
     const confirm = wrapper.get<HTMLButtonElement>("[data-confirm-cancel]");
     const dismiss = wrapper.get<HTMLButtonElement>("[data-dismiss-cancel]");
+    const reason = wrapper.get<HTMLTextAreaElement>("#cancel-reason");
     expect(trigger.text()).toBe("取消评估");
     expect(document.activeElement).toBe(confirm.element);
 
-    dismiss.element.focus();
+    reason.element.focus();
     await dialog.trigger("keydown", { key: "Tab", shiftKey: true });
     expect(document.activeElement).toBe(confirm.element);
+    confirm.element.focus();
+    await dialog.trigger("keydown", { key: "Tab" });
+    expect(document.activeElement).toBe(reason.element);
     await dialog.trigger("keydown", { key: "Escape" });
     await flushPromises();
     expect(wrapper.find("[role='dialog']").exists()).toBe(false);
     expect(document.activeElement).toBe(trigger.element);
     wrapper.unmount();
+  });
+
+  it("uses a Chinese fallback when cancellation fails", async () => {
+    currentUser.value = {
+      id: 1, login_name: "owner", display_name: "Owner", roles: ["applicant_owner"],
+    };
+    vi.mocked(getEvaluations).mockResolvedValue([pending]);
+    vi.mocked(cancelEvaluation).mockRejectedValue(new Error("offline"));
+    const wrapper = mount(PolicyDetailView);
+    await flushPromises();
+
+    await wrapper.get("[data-cancel-evaluation]").trigger("click");
+    await wrapper.get("[data-confirm-cancel]").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("无法取消本次评估，请稍后重试");
+    expect(wrapper.text()).not.toContain("Unable to cancel");
+  });
+
+  it("shows confirmed conclusion metadata, reverse history, and owner adjustment controls", async () => {
+    currentUser.value = {
+      id: 1, login_name: "owner", display_name: "负责人", roles: ["applicant_owner"],
+    };
+    vi.mocked(getPolicy).mockResolvedValue({
+      ...policy,
+      current_conclusion: "watch",
+      conclusion_confirmed: true,
+      current_conclusion_source: "manual_override",
+      conclusion_confirmed_at: "2026-07-31T06:20:00Z",
+    });
+    vi.mocked(getEvaluations).mockResolvedValue([{ ...succeeded, status: "confirmed" }]);
+    vi.mocked(getPolicyConclusionHistory).mockResolvedValue([
+      {
+        id: 1, policy_id: 8, evaluation_batch_id: 31,
+        previous_conclusion: "recommend_apply", conclusion: "watch",
+        source: "evaluation_confirmation", reason: "首次确认", decided_by: 1,
+        decided_at: "2026-07-30T06:20:00Z",
+      },
+      {
+        id: 2, policy_id: 8, evaluation_batch_id: 31,
+        previous_conclusion: "watch", conclusion: "not_recommended",
+        source: "manual_override", reason: "预算暂缓", decided_by: 1,
+        decided_at: "2026-07-31T06:20:00Z",
+      },
+    ]);
+
+    const wrapper = mount(PolicyDetailView);
+    await flushPromises();
+
+    expect(wrapper.get("[data-conclusion-metadata]").text()).toContain("当前结论：持续关注");
+    expect(wrapper.get("[data-conclusion-metadata]").text()).toContain("来源：负责人调整");
+    expect(wrapper.get("[data-conclusion-metadata]").text()).toContain("确认时间：2026年7月31日 14:20");
+    await wrapper.get("[data-open-conclusion-decision]").trigger("click");
+    expect(wrapper.find("[data-conclusion-decision-form]").exists()).toBe(true);
+    const history = wrapper.findAll("[data-conclusion-history-item]");
+    expect(history).toHaveLength(2);
+    expect(history[0].text()).toContain("持续关注 → 暂不建议申报");
+    expect(history[0].text()).toContain("预算暂缓");
+    expect(history[1].text()).toContain("建议申报 → 持续关注");
+  });
+
+  it("shows conclusion history but no adjustment form to a reader", async () => {
+    currentUser.value = {
+      id: 2, login_name: "reader", display_name: "只读用户", roles: ["reader"],
+    };
+    vi.mocked(getPolicy).mockResolvedValue({
+      ...policy,
+      current_conclusion: "watch",
+      conclusion_confirmed: true,
+      current_conclusion_source: "evaluation_confirmation",
+      conclusion_confirmed_at: "2026-07-31T06:20:00Z",
+    });
+    vi.mocked(getEvaluations).mockResolvedValue([{ ...succeeded, status: "confirmed" }]);
+    vi.mocked(getPolicyConclusionHistory).mockResolvedValue([{
+      id: 1, policy_id: 8, evaluation_batch_id: 31,
+      previous_conclusion: "recommend_apply", conclusion: "watch",
+      source: "evaluation_confirmation", reason: null, decided_by: 1,
+      decided_at: "2026-07-31T06:20:00Z",
+    }]);
+
+    const wrapper = mount(PolicyDetailView);
+    await flushPromises();
+
+    expect(wrapper.find("[data-conclusion-decision-form]").exists()).toBe(false);
+    expect(wrapper.findAll("[data-conclusion-history-item]")).toHaveLength(1);
   });
 
   it("shows evaluation loading instead of a false empty state", async () => {

@@ -8,10 +8,13 @@ vi.mock("vue-router", () => ({ useRoute: () => ({ params: { id: "8" } }) }));
 vi.mock("../../src/api/evaluations", () => ({
   getEvaluations: vi.fn().mockResolvedValue([]),
   createEvaluation: vi.fn(),
+  getPrimaryEntityHistory: vi.fn().mockResolvedValue([]),
 }));
 vi.mock("../../src/api/policies", () => ({
   getPolicy: vi.fn(),
   getPolicyVersions: vi.fn(),
+  getPolicyConclusionHistory: vi.fn().mockResolvedValue([]),
+  adjustPolicyConclusion: vi.fn(),
 }));
 
 describe("PolicyDetailView", () => {
@@ -24,6 +27,8 @@ describe("PolicyDetailView", () => {
       deadline_on: "2026-08-20",
       current_conclusion: "pending_confirmation",
       conclusion_confirmed: false,
+      current_conclusion_source: "system_suggestion",
+      conclusion_confirmed_at: null,
       current_evaluation_batch_id: null,
       current_version: {
         id: 12,
