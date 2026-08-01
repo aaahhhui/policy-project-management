@@ -49,3 +49,31 @@ node node_modules/vitest/vitest.mjs run tests/unit/EvaluationConfirmationForm.sp
 ## Concerns
 
 无阻塞。未部署，符合任务约束。
+
+## 官方审查修复 fix1
+
+### 问题与根因
+
+已有主申报企业的政策重新评估时，详情页已加载当前主企业，但没有把 seed code 传给确认表单。表单因此既不能预选/标示当前项，也只把模型结论和评分纳入修改判断。用户切换主企业而不修改模型值时，前端允许空原因请求，后端随后以 `PrimaryEntityReasonRequired` 拒绝并落入通用错误提示。
+
+### 修复
+
+- `EvaluationConfirmationForm` 接收并跟随 `currentPrimaryEntitySeedCode`，预选当前候选并标示“当前主企业”。
+- 保持当前主企业不视为变化；切换到其他候选会独立触发“切换主申报企业后必须填写原因”。
+- 切换理由填写后，确认 payload 同时携带去空白理由和新的 `primary_entity_seed_code`。
+- `PolicyDetailView` 将已加载的当前主企业 seed code 传入重新评估确认表单。
+
+### TDD 与验证
+
+- RED：聚焦 2 files / 25 tests 中 3 项按预期失败，分别证明当前项未预选、切换未要求原因、详情页未传递当前 seed code。
+- GREEN：聚焦 2 files / 25 tests 全部通过。
+- 完整前端 Vitest：18 files / 70 tests，PASS。
+- TypeScript/Vue 类型检查：`vue-tsc -b --noEmit`，PASS。
+- `git diff --check`：PASS。
+
+### 记录但本轮不扩修
+
+- 结论历史加载失败目前静默回退为空列表。
+- 主企业历史加载失败目前静默回退为无当前主企业。
+
+以上两项为审查记录的 minor，不在 fix1 授权范围内；本轮未扩展修改。

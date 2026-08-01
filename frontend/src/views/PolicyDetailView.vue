@@ -301,6 +301,7 @@ onMounted(async () => {
         <EvaluationConfirmationForm
           v-if="canRetry && currentEvaluation.status === 'awaiting_confirmation'"
           :evaluation="currentEvaluation"
+          :current-primary-entity-seed-code="primaryEntity?.entity_seed_code ?? null"
           @confirmed="refreshConclusionState(Number(route.params.id))"
         />
         <PrimaryEntitySelector

@@ -92,3 +92,47 @@ it("requires a reason after changing the model conclusion", async () => {
   expect(wrapper.text()).toContain("修改模型建议后必须填写原因");
   expect(confirmEvaluation).not.toHaveBeenCalled();
 });
+
+it("keeps the current primary enterprise selected without requiring a switch reason", async () => {
+  vi.mocked(confirmEvaluation).mockResolvedValue({});
+  const wrapper = mount(EvaluationConfirmationForm, {
+    props: {
+      evaluation,
+      currentPrimaryEntitySeedCode: "ENTITY-BEIJING",
+    },
+  });
+
+  expect(wrapper.get<HTMLInputElement>('[name="primary-entity"][value="ENTITY-BEIJING"]').element.checked).toBe(true);
+  expect(wrapper.text()).toContain("北京适创科技有限公司（当前主企业）");
+  await wrapper.get("form").trigger("submit");
+
+  expect(wrapper.text()).not.toContain("修改模型建议后必须填写原因");
+  expect(confirmEvaluation).toHaveBeenCalledWith(17, expect.objectContaining({
+    change_reason: null,
+    primary_entity_seed_code: "ENTITY-BEIJING",
+  }));
+});
+
+it("requires a reason to switch the current primary enterprise and submits the new candidate", async () => {
+  vi.mocked(confirmEvaluation).mockResolvedValue({});
+  const wrapper = mount(EvaluationConfirmationForm, {
+    props: {
+      evaluation,
+      currentPrimaryEntitySeedCode: "ENTITY-BEIJING",
+    },
+  });
+  await wrapper.get<HTMLInputElement>('[name="primary-entity"][value="ENTITY-SUZHOU"]').setValue();
+
+  await wrapper.get("form").trigger("submit");
+
+  expect(wrapper.text()).toContain("切换主申报企业后必须填写原因");
+  expect(confirmEvaluation).not.toHaveBeenCalled();
+
+  await wrapper.get<HTMLTextAreaElement>("textarea").setValue("切换为苏州主体");
+  await wrapper.get("form").trigger("submit");
+
+  expect(confirmEvaluation).toHaveBeenCalledWith(17, expect.objectContaining({
+    change_reason: "切换为苏州主体",
+    primary_entity_seed_code: "ENTITY-SUZHOU",
+  }));
+});

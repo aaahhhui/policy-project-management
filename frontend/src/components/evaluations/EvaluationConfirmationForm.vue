@@ -1,10 +1,15 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 
 import { confirmEvaluation, type EntityEvaluation, type EvaluationBatch } from "../../api/evaluations";
 
 type ConfirmableEvaluation = Pick<EvaluationBatch, "id" | "conclusion" | "summary" | "key_conditions" | "profile_snapshot"> & { entities: EntityEvaluation[] };
-const props = defineProps<{ evaluation: ConfirmableEvaluation }>();
+const props = withDefaults(defineProps<{
+  evaluation: ConfirmableEvaluation;
+  currentPrimaryEntitySeedCode?: string | null;
+}>(), {
+  currentPrimaryEntitySeedCode: null,
+});
 const emit = defineEmits<{ confirmed: [] }>();
 const entities = ref(props.evaluation.entities.map((item) => ({ ...item })));
 const conclusion = ref(props.evaluation.conclusion);
@@ -12,9 +17,14 @@ const primaryEntitySeedCode = ref("");
 const reason = ref("");
 const error = ref("");
 const saving = ref(false);
-const changed = computed(() => (
+const modelChanged = computed(() => (
   JSON.stringify(entities.value) !== JSON.stringify(props.evaluation.entities)
   || conclusion.value !== props.evaluation.conclusion
+));
+const primaryEntityChanged = computed(() => (
+  conclusion.value === "recommend_apply"
+  && Boolean(props.currentPrimaryEntitySeedCode)
+  && primaryEntitySeedCode.value !== props.currentPrimaryEntitySeedCode
 ));
 const conclusionOptions = [
   { value: "recommend_apply", label: "建议申报" },
@@ -38,9 +48,23 @@ function entityName(seedCode: string): string {
   return entityNames.value.get(seedCode) || fallbackNames[seedCode] || "经营主体";
 }
 
+watch(
+  () => props.currentPrimaryEntitySeedCode,
+  (current, previous) => {
+    if (!primaryEntitySeedCode.value || primaryEntitySeedCode.value === previous) {
+      primaryEntitySeedCode.value = current ?? "";
+    }
+  },
+  { immediate: true },
+);
+
 async function submit() {
   error.value = "";
-  if (changed.value && !reason.value.trim()) {
+  if (primaryEntityChanged.value && !reason.value.trim()) {
+    error.value = "切换主申报企业后必须填写原因";
+    return;
+  }
+  if (modelChanged.value && !reason.value.trim()) {
     error.value = "修改模型建议后必须填写原因";
     return;
   }
@@ -88,10 +112,12 @@ async function submit() {
       <legend>主申报企业</legend>
       <label v-for="entity in entities" :key="entity.entity_seed_code">
         <input v-model="primaryEntitySeedCode" type="radio" name="primary-entity" :value="entity.entity_seed_code" />
-        <span>{{ entityName(entity.entity_seed_code) }}</span>
+        <span>
+          {{ entityName(entity.entity_seed_code) }}<template v-if="entity.entity_seed_code === currentPrimaryEntitySeedCode">（当前主企业）</template>
+        </span>
       </label>
     </fieldset>
-    <label class="reason">修改原因<textarea v-model="reason" rows="2" placeholder="仅在修改模型建议时必填" /></label>
+    <label class="reason">修改原因<textarea v-model="reason" rows="2" placeholder="修改模型建议或切换主企业时必填" /></label>
     <p v-if="error" role="alert">{{ error }}</p>
     <button type="submit" :disabled="saving">{{ saving ? "确认中…" : "确认评估" }}</button>
   </form>

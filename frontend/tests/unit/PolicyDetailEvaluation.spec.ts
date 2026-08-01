@@ -239,6 +239,32 @@ describe("PolicyDetailView evaluation", () => {
     expect(wrapper.text()).not.toContain("AI");
   });
 
+  it("passes the saved primary enterprise into a reevaluation confirmation", async () => {
+    currentUser.value = {
+      id: 1, login_name: "owner", display_name: "负责人", roles: ["applicant_owner"],
+    };
+    vi.mocked(getEvaluations).mockResolvedValue([{
+      ...succeeded,
+      status: "awaiting_confirmation",
+      profile_snapshot: [
+        { seed_code: "ENTITY-BEIJING", legal_name: "北京适创科技有限公司" },
+        { seed_code: "ENTITY-SUZHOU", legal_name: "苏州数算软云科技有限公司" },
+        { seed_code: "ENTITY-SHENZHEN", legal_name: "深圳适创腾扬科技有限公司" },
+      ],
+    }]);
+    vi.mocked(getPrimaryEntityHistory).mockResolvedValue([{
+      entity_seed_code: "ENTITY-SUZHOU",
+      entity_legal_name: "苏州数算软云科技有限公司",
+      is_current: true,
+    }]);
+
+    const wrapper = mount(PolicyDetailView);
+    await flushPromises();
+
+    expect(wrapper.get<HTMLInputElement>('[name="primary-entity"][value="ENTITY-SUZHOU"]').element.checked).toBe(true);
+    expect(wrapper.text()).toContain("苏州数算软云科技有限公司（当前主企业）");
+  });
+
   it("asks an owner to confirm retry and refreshes to pending state", async () => {
     currentUser.value = {
       id: 1, login_name: "owner", display_name: "负责人", roles: ["applicant_owner"],
