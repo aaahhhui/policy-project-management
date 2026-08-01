@@ -4,11 +4,13 @@ import { useRoute } from "vue-router";
 
 import {
   createEvaluation,
+  cancelEvaluation,
   getEvaluations,
   getPrimaryEntityHistory,
   type EvaluationBatch,
   type PrimaryEntityDecision,
 } from "../api/evaluations";
+import { useEvaluationPolling } from "../composables/useEvaluationPolling";
 import { getPolicy, getPolicyVersions, type PolicyDetail, type PolicyVersion } from "../api/policies";
 import { currentUser } from "../auth/state";
 import EvaluationHistory from "../components/evaluations/EvaluationHistory.vue";
@@ -30,6 +32,9 @@ const evaluationLoading = ref(true);
 const primaryEntity = ref<PrimaryEntityDecision | null>(null);
 const confirmRetryOpen = ref(false);
 const retrying = ref(false);
+const cancelOpen = ref(false);
+const cancelling = ref(false);
+const cancelReason = ref("");
 const retryButton = ref<HTMLButtonElement | null>(null);
 const retryDialog = ref<HTMLElement | null>(null);
 const confirmRetryButton = ref<HTMLButtonElement | null>(null);
@@ -42,6 +47,9 @@ const attemptNumberById = computed<Record<number, number>>(() => Object.fromEntr
 ));
 const canRetry = computed(
   () => currentUser.value?.roles.includes("applicant_owner") ?? false,
+);
+const isEvaluationActive = computed(
+  () => currentEvaluation.value !== null && ["pending", "running"].includes(currentEvaluation.value.status),
 );
 function formatDate(value: string | null) { return value ?? "未注明"; }
 function formatTime(value: string) { return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
@@ -88,6 +96,27 @@ async function confirmRetry(): Promise<void> {
   }
 }
 
+async function confirmCancellation(): Promise<void> {
+  const evaluation = currentEvaluation.value;
+  if (!policy.value || !evaluation || cancelling.value) return;
+  cancelling.value = true;
+  evaluationError.value = "";
+  try {
+    await cancelEvaluation(evaluation.id, cancelReason.value.trim() || null);
+    cancelOpen.value = false;
+    cancelReason.value = "";
+    await refreshEvaluations(policy.value.id);
+  } catch {
+    evaluationError.value = "Unable to cancel this evaluation. Please try again.";
+  } finally {
+    cancelling.value = false;
+  }
+}
+
+function dismissCancelDialog(): void {
+  if (!cancelling.value) cancelOpen.value = false;
+}
+
 function dismissRetryDialog(): void {
   if (!retrying.value) confirmRetryOpen.value = false;
 }
@@ -126,6 +155,11 @@ watch(confirmRetryOpen, async (open) => {
     retryButton.value.focus();
   }
 });
+
+useEvaluationPolling(
+  () => policy.value ? refreshEvaluations(policy.value.id) : Promise.resolve(),
+  isEvaluationActive,
+);
 
 onMounted(async () => {
   const id = Number(route.params.id);
@@ -177,6 +211,9 @@ onMounted(async () => {
           <span class="state-marker" aria-hidden="true"></span>
           <div><h2>评估中</h2><p>后台正在分析政策条件与三家经营主体档案，完成后将在这里显示结果。</p></div>
         </div>
+        <div v-if="canRetry && ['pending', 'running'].includes(currentEvaluation.status)" class="evaluation-actions">
+          <button type="button" data-cancel-evaluation @click="cancelOpen = true">Cancel evaluation</button>
+        </div>
         <div v-else-if="currentEvaluation.status === 'failed'" class="task-state failed" role="alert">
           <span class="state-marker" aria-hidden="true"></span>
           <div><h2>评估失败</h2><p>本次评估未生成有效结果。负责人可重新创建评估批次。</p></div>
@@ -201,6 +238,19 @@ onMounted(async () => {
         <div>
           <button type="button" data-cancel-retry class="secondary" :disabled="retrying" @click="dismissRetryDialog">取消</button>
           <button ref="confirmRetryButton" type="button" data-confirm-retry :disabled="retrying" @click="confirmRetry">{{ retrying ? "正在创建…" : "确认重新评估" }}</button>
+        </div>
+      </section>
+    </div>
+    <div v-if="cancelOpen" class="dialog-backdrop" @click.self="dismissCancelDialog">
+      <section role="dialog" aria-modal="true" :aria-busy="cancelling" aria-labelledby="cancel-dialog-title" class="confirm-dialog">
+        <p class="eyebrow">Cancel evaluation</p>
+        <h2 id="cancel-dialog-title">Cancel this evaluation?</h2>
+        <p>You may optionally record why this evaluation is being cancelled.</p>
+        <label for="cancel-reason">Reason (optional)</label>
+        <textarea id="cancel-reason" v-model="cancelReason" :disabled="cancelling"></textarea>
+        <div>
+          <button type="button" data-dismiss-cancel class="secondary" :disabled="cancelling" @click="dismissCancelDialog">Keep evaluation</button>
+          <button type="button" data-confirm-cancel :disabled="cancelling" @click="confirmCancellation">{{ cancelling ? "Cancelling..." : "Cancel evaluation" }}</button>
         </div>
       </section>
     </div>

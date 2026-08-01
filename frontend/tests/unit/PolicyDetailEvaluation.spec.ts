@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createEvaluation,
+  cancelEvaluation,
   getEvaluations,
   getPrimaryEntityHistory,
   selectPrimaryEntity,
@@ -21,6 +22,7 @@ vi.mock("../../src/api/policies", () => ({
 vi.mock("../../src/api/evaluations", () => ({
   getEvaluations: vi.fn(),
   createEvaluation: vi.fn(),
+  cancelEvaluation: vi.fn(),
   getPrimaryEntityHistory: vi.fn(),
   selectPrimaryEntity: vi.fn(),
 }));
@@ -246,6 +248,38 @@ describe("PolicyDetailView evaluation", () => {
     expect(createEvaluation).toHaveBeenCalledWith(8);
     expect(getEvaluations).toHaveBeenCalledTimes(2);
     expect(wrapper.text()).toContain("评估中");
+  });
+
+  it("lets an owner cancel a pending evaluation without entering a reason and refreshes its state", async () => {
+    currentUser.value = {
+      id: 1, login_name: "owner", display_name: "Owner", roles: ["applicant_owner"],
+    };
+    vi.mocked(getEvaluations)
+      .mockResolvedValueOnce([pending])
+      .mockResolvedValueOnce([{ ...pending, status: "cancelled", finished_at: "2026-07-31T10:00:00Z" }]);
+    vi.mocked(cancelEvaluation).mockResolvedValue({ ...pending, status: "cancelled", finished_at: "2026-07-31T10:00:00Z" });
+    const wrapper = mount(PolicyDetailView);
+    await flushPromises();
+
+    await wrapper.get("[data-cancel-evaluation]").trigger("click");
+    expect(wrapper.find("[role='dialog']").exists()).toBe(true);
+    await wrapper.get("[data-confirm-cancel]").trigger("click");
+    await flushPromises();
+
+    expect(cancelEvaluation).toHaveBeenCalledWith(32, null);
+    expect(getEvaluations).toHaveBeenCalledTimes(2);
+    expect(wrapper.find("[role='dialog']").exists()).toBe(false);
+  });
+
+  it("does not show the cancellation action to a reader", async () => {
+    currentUser.value = {
+      id: 2, login_name: "reader", display_name: "Reader", roles: ["reader"],
+    };
+    vi.mocked(getEvaluations).mockResolvedValue([pending]);
+    const wrapper = mount(PolicyDetailView);
+    await flushPromises();
+
+    expect(wrapper.find("[data-cancel-evaluation]").exists()).toBe(false);
   });
 
   it("shows evaluation loading instead of a false empty state", async () => {
