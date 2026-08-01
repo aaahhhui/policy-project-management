@@ -282,6 +282,34 @@ describe("PolicyDetailView evaluation", () => {
     expect(wrapper.find("[data-cancel-evaluation]").exists()).toBe(false);
   });
 
+  it("focuses, traps, and restores focus for the owner cancellation dialog", async () => {
+    currentUser.value = {
+      id: 1, login_name: "owner", display_name: "Owner", roles: ["applicant_owner"],
+    };
+    vi.mocked(getEvaluations).mockResolvedValue([pending]);
+    const wrapper = mount(PolicyDetailView, { attachTo: document.body });
+    await flushPromises();
+    const trigger = wrapper.get<HTMLButtonElement>("[data-cancel-evaluation]");
+    trigger.element.focus();
+
+    await trigger.trigger("click");
+    await flushPromises();
+    const dialog = wrapper.get<HTMLElement>("[role='dialog']");
+    const confirm = wrapper.get<HTMLButtonElement>("[data-confirm-cancel]");
+    const dismiss = wrapper.get<HTMLButtonElement>("[data-dismiss-cancel]");
+    expect(trigger.text()).toBe("取消评估");
+    expect(document.activeElement).toBe(confirm.element);
+
+    dismiss.element.focus();
+    await dialog.trigger("keydown", { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(confirm.element);
+    await dialog.trigger("keydown", { key: "Escape" });
+    await flushPromises();
+    expect(wrapper.find("[role='dialog']").exists()).toBe(false);
+    expect(document.activeElement).toBe(trigger.element);
+    wrapper.unmount();
+  });
+
   it("shows evaluation loading instead of a false empty state", async () => {
     currentUser.value = {
       id: 2, login_name: "reader", display_name: "只读用户", roles: ["reader"],

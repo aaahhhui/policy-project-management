@@ -7,6 +7,7 @@ export function useEvaluationPolling(
 ): void {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let loading = false;
+  let disposed = false;
 
   function clearTimer(): void {
     if (timer !== null) {
@@ -16,10 +17,10 @@ export function useEvaluationPolling(
   }
 
   function schedule(): void {
-    if (loading || timer !== null) return;
+    if (disposed || loading || timer !== null) return;
     timer = setTimeout(async () => {
       timer = null;
-      if (!toValue(isActive)) return;
+      if (disposed || !toValue(isActive)) return;
       loading = true;
       try {
         await load();
@@ -27,7 +28,7 @@ export function useEvaluationPolling(
         // The next scheduled cycle retries failed refreshes.
       } finally {
         loading = false;
-        if (toValue(isActive)) schedule();
+        if (!disposed && toValue(isActive)) schedule();
       }
     }, intervalMs);
   }
@@ -37,5 +38,8 @@ export function useEvaluationPolling(
     else clearTimer();
   }, { immediate: true });
 
-  onUnmounted(clearTimer);
+  onUnmounted(() => {
+    disposed = true;
+    clearTimer();
+  });
 }

@@ -35,6 +35,9 @@ const retrying = ref(false);
 const cancelOpen = ref(false);
 const cancelling = ref(false);
 const cancelReason = ref("");
+const cancelButton = ref<HTMLButtonElement | null>(null);
+const cancelDialog = ref<HTMLElement | null>(null);
+const confirmCancelButton = ref<HTMLButtonElement | null>(null);
 const retryButton = ref<HTMLButtonElement | null>(null);
 const retryDialog = ref<HTMLElement | null>(null);
 const confirmRetryButton = ref<HTMLButtonElement | null>(null);
@@ -147,12 +150,47 @@ function handleDialogKeydown(event: KeyboardEvent): void {
   }
 }
 
+function handleCancelDialogKeydown(event: KeyboardEvent): void {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    dismissCancelDialog();
+    return;
+  }
+  if (event.key !== "Tab" || !cancelDialog.value) return;
+  const buttons = Array.from(
+    cancelDialog.value.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"),
+  );
+  if (!buttons.length) {
+    event.preventDefault();
+    cancelDialog.value.focus();
+    return;
+  }
+  const first = buttons[0];
+  const last = buttons[buttons.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 watch(confirmRetryOpen, async (open) => {
   await nextTick();
   if (open) {
     confirmRetryButton.value?.focus();
   } else if (retryButton.value?.isConnected) {
     retryButton.value.focus();
+  }
+});
+
+watch(cancelOpen, async (open) => {
+  await nextTick();
+  if (open) {
+    confirmCancelButton.value?.focus();
+  } else if (cancelButton.value?.isConnected) {
+    cancelButton.value.focus();
   }
 });
 
@@ -212,7 +250,7 @@ onMounted(async () => {
           <div><h2>评估中</h2><p>后台正在分析政策条件与三家经营主体档案，完成后将在这里显示结果。</p></div>
         </div>
         <div v-if="canRetry && ['pending', 'running'].includes(currentEvaluation.status)" class="evaluation-actions">
-          <button type="button" data-cancel-evaluation @click="cancelOpen = true">Cancel evaluation</button>
+          <button ref="cancelButton" type="button" data-cancel-evaluation @click="cancelOpen = true">取消评估</button>
         </div>
         <div v-else-if="currentEvaluation.status === 'failed'" class="task-state failed" role="alert">
           <span class="state-marker" aria-hidden="true"></span>
@@ -242,15 +280,15 @@ onMounted(async () => {
       </section>
     </div>
     <div v-if="cancelOpen" class="dialog-backdrop" @click.self="dismissCancelDialog">
-      <section role="dialog" aria-modal="true" :aria-busy="cancelling" aria-labelledby="cancel-dialog-title" class="confirm-dialog">
-        <p class="eyebrow">Cancel evaluation</p>
-        <h2 id="cancel-dialog-title">Cancel this evaluation?</h2>
-        <p>You may optionally record why this evaluation is being cancelled.</p>
-        <label for="cancel-reason">Reason (optional)</label>
+      <section ref="cancelDialog" role="dialog" aria-modal="true" :aria-busy="cancelling" aria-labelledby="cancel-dialog-title" class="confirm-dialog" tabindex="-1" @keydown="handleCancelDialogKeydown">
+        <p class="eyebrow">取消评估</p>
+        <h2 id="cancel-dialog-title">确认取消本次评估？</h2>
+        <p>可选填写取消原因，便于后续追溯。</p>
+        <label for="cancel-reason">取消原因（可选）</label>
         <textarea id="cancel-reason" v-model="cancelReason" :disabled="cancelling"></textarea>
         <div>
-          <button type="button" data-dismiss-cancel class="secondary" :disabled="cancelling" @click="dismissCancelDialog">Keep evaluation</button>
-          <button type="button" data-confirm-cancel :disabled="cancelling" @click="confirmCancellation">{{ cancelling ? "Cancelling..." : "Cancel evaluation" }}</button>
+          <button type="button" data-dismiss-cancel class="secondary" :disabled="cancelling" @click="dismissCancelDialog">保留评估</button>
+          <button ref="confirmCancelButton" type="button" data-confirm-cancel :disabled="cancelling" @click="confirmCancellation">{{ cancelling ? "正在取消…" : "确认取消评估" }}</button>
         </div>
       </section>
     </div>

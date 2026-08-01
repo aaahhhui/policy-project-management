@@ -91,4 +91,18 @@ describe("useEvaluationPolling", () => {
 
     expect(load).not.toHaveBeenCalled();
   });
+
+  it("does not reschedule when an in-flight load resolves after unmount", async () => {
+    vi.useFakeTimers();
+    let resolveLoad!: () => void;
+    const load = vi.fn(() => new Promise<void>((resolve) => { resolveLoad = resolve; }));
+    const wrapper = mountPolling(load, ref(true), 3_000);
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    wrapper.unmount();
+    resolveLoad();
+    await vi.advanceTimersByTimeAsync(6_000);
+
+    expect(load).toHaveBeenCalledTimes(1);
+  });
 });
