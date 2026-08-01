@@ -110,7 +110,7 @@ Stage 1 Demo 正占用宿主机 8080，因此未同时发布 Stage 2 web 的宿�
 
 ## 2026-08-01 Stage 2 流程优化自动验收与 8081 发布
 
-状态：自动回归、MySQL 迁移、8081 发布和脱敏安全扫描通过；浏览器人工验收待控制器执行，本文不将人工项记为通过。
+状态：通过。自动回归、MySQL 迁移、8081 发布、脱敏安全扫描和控制器浏览器人工验收均已完成。
 
 ### 自动验证
 
@@ -125,7 +125,7 @@ Stage 1 Demo 正占用宿主机 8080，因此未同时发布 Stage 2 web 的宿�
 - 首次用发布前 API 镜像执行 `alembic upgrade head` 只看到旧 head `0003_expand_evaluation_status`；新镜像执行 0004 时发现 revision `0004_stage2_workflow_optimization` 超过 MySQL 默认 32 字符版本列，DDL 已提交而版本行更新失败，evaluator 因 schema 与代码不一致而重启。
 - 已按 TDD 修复为 `0004_workflow_optimization`：新增边界测试先失败、修复后通过。
 - 只读检查确认部分迁移的新表/字段没有运行时写入后，执行 `stamp 0004_workflow_optimization → downgrade 0003_expand_evaluation_status → upgrade head`，三步均退出 0；避免在非事务 MySQL DDL 上盲目重复创建对象。
-- 最终 `alembic current` 为 `0004_workflow_optimization (head)`；2 条既有确认记录回填为 2 条 `evaluation_confirmation` 结论决策。
+- 0004 恢复完成时 `alembic current` 为 `0004_workflow_optimization (head)`；2 条既有确认记录回填为 2 条 `evaluation_confirmation` 结论决策。后续结论时间戳修复发布后，最终 head 为 `0005_decision_timestamps`。
 
 ### 部署状态
 
@@ -136,12 +136,12 @@ Stage 1 Demo 正占用宿主机 8080，因此未同时发布 Stage 2 web 的宿�
 
 ### 审计与安全
 
-- 已部署数据库现有审计计数：`evaluation_confirmed=2`、`primary_entity_selected=1`、`primary_entity_changed=2`；控制器尚未在本轮人工触发取消和结论调整，因此这两类现场事件待人工验收后复核。
+- 最终现场审计计数：`evaluation_cancelled=1`、`evaluation_confirmed=3`、`policy_conclusion_changed=1`、`primary_entity_selected=1`、`primary_entity_changed=2`。审计载荷中的本地敏感值、Authorization 值、provider token 形态和私钥头均为 0 匹配。
 - 自动化测试已覆盖 `evaluation_cancelled`（同时断言审计载荷排除凭据和 provider identifier）与 `policy_conclusion_changed`；自动化通过不替代现场人工操作。
-- 扫描 229 个 Git 跟踪文件：真实 provider key 精确匹配 0、Authorization 值 0、provider token 形态 0、私钥头 0。基础设施变量有 8 个精确匹配，仅位于 `.example` 和 `.md`，逐键确认均等于公开示例默认值。
+- 扫描 231 个 Git 跟踪文件：真实 provider key 精确匹配 0、Authorization 值 0、provider token 形态 0、私钥头 0。基础设施变量有 8 个精确匹配，仅位于 `.example` 和 `.md`，逐键确认均等于公开示例默认值。
 - 扫描 6 个 Compose 服务、约 9.1 万字符日志：本地敏感值精确匹配、Authorization 值、provider token 形态和私钥头均为 0。扫描只输出计数和文件类型，没有输出匹配行或任何 secret 值。
 
-### 待控制器执行的浏览器人工验收
+### 控制器浏览器人工验收清单
 
 入口：`http://localhost:8081/policies/16`。
 
@@ -153,4 +153,24 @@ Stage 1 Demo 正占用宿主机 8080，因此未同时发布 Stage 2 web 的宿�
 6. 只读账号无写操作入口。
 7. 历史显示“第 N 次评估”和次要批次号。
 
-人工状态：待控制器执行；尤其需要在取消和结论调整后复核现场审计事件。
+人工状态：7 项全部通过；具体操作证据和期间阻塞修复见下文。
+
+### 控制器首次人工验收阻塞与 0005 修复
+
+- 控制器验证政策 16 的人工结论调整时，空原因前端校验正常；填写原因后 POST 返回 500。API 错误定位到 `policy_conclusion_decisions.created_at` 没有数据库默认值，0004 创建的 `created_at`/`updated_at` 与 ORM `TimestampMixin` 的 `server_default=func.now()` 不一致。
+- 未修改已部署的 0004；新增后续迁移 `0005_decision_timestamps`，为两列增加 MySQL/SQLite 兼容的 `CURRENT_TIMESTAMP` server default，并提供对应 downgrade。
+- TDD：新迁移测试在修复前 1 failed，0005 后同一测试 1 passed；完整 Stage 2 schema 加 SQLite upgrade/downgrade/re-upgrade 为 7 passed；Task 8 后端指定集合更新为 76 passed。
+- 真实 MySQL 从 0004 升级到 `0005_decision_timestamps (head)`，inspector 确认两列默认值均为 `CURRENT_TIMESTAMP`。真实 MySQL ORM 插入在省略两列时成功 flush 且返回两个时间值，随后 rollback，没有留下测试决策。
+- 政策 16 当前批次已变为 `awaiting_confirmation`，因此自动服务 probe 按业务前置条件拒绝结论调整；这不等于浏览器路径通过。控制器需要先完成确认，再重新验证带原因结论调整。
+- 修复提交：`16238d9 fix: add conclusion timestamp defaults`。最终镜像重建首次在 604 秒工具时限处超时，缓存重试后 API/evaluator 成功切换；最终镜像内 head 为 0005。
+
+### 控制器浏览器复验结果与取消显示修复
+
+- PASS：3 秒轮询将评估中自动刷新到待确认。
+- PASS：建议申报显示三家候选并预选当前深圳主体；空理由被前端阻止，填写理由后一次确认成功。当前结论为建议申报，来源为负责人确认，历史新增正确。
+- PASS：随后带理由调整为持续关注成功；来源更新为负责人调整，时间、前后结论和追加历史正确。
+- PASS：历史显示“第 N 次评估”和次要批次号。
+- PASS：只读 reader 可见结论来源、时间和历史；调整、确认、重评、取消和主企业写入口均为 0。
+- 首次 FAIL：控制器暂停 evaluator 后创建新批次并无理由取消；API/UI 操作完成且取消按钮消失，但最新 cancelled 批次既被排除出历史，又没有 current cancelled 渲染，页面完全看不到“已取消”。evaluator 随后已恢复。
+- TDD 修复：现有浏览器行为测试新增“取消后必须显示已取消且不得显示评估失败”断言，修复前聚焦测试 1 failed / 17 passed；新增 current cancelled 状态卡后 18/18 passed。卡片同时显示“第 N 次评估 · 批次 #ID”。完整前端仍为 18 files / 71 tests，typecheck/build 退出 0。
+- 前端修复提交：`f447e51 fix: show current cancelled evaluation`；web 已重建并发布。控制器最终复验 PASS：政策 16 当前评估显示“已取消”，文案为“第 7 次评估 · 批次 #26 已取消，不会继续运行。”，未显示“评估失败”；reader 会话也可见。

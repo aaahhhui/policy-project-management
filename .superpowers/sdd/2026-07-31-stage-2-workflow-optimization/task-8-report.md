@@ -4,13 +4,14 @@
 
 工作树：`C:\codex\testproduct\.worktrees\stage2-evaluation-decision-loop`
 
-状态：自动回归、迁移恢复、8081 发布和安全扫描通过；浏览器人工验收待控制器执行。
+状态：通过。自动回归、迁移恢复、8081 发布、安全扫描和控制器浏览器人工验收均已完成。
 
 ## 交付与提交
 
 - 迁移修复提交：`0851de8 fix: keep alembic revision within mysql limit`。
-- 文档提交：完成本报告、smoke record 和 project memory 后使用 `docs: record workflow optimization acceptance`。
-- 未执行浏览器人工验收，不将任何人工项写为通过。
+- 结论时间戳修复提交：`16238d9 fix: add conclusion timestamp defaults`。
+- 取消态显示修复提交：`f447e51 fix: show current cancelled evaluation`。
+- 验收记录：本报告、smoke record 和 project memory 已按最终自动化、部署、审计与浏览器结果更新。
 
 ## 命令与结果
 
@@ -69,7 +70,7 @@
 ### 最终部署验证
 
 1. `docker compose run --rm api alembic current`
-   - 最终发布镜像报告 `0004_workflow_optimization (head)`。
+   - 初次恢复后为 `0004_workflow_optimization (head)`；结论时间戳修复发布后，最终为 `0005_decision_timestamps (head)`。
 2. `docker compose ps`
    - MySQL、collector、evaluator、scheduler 为 healthy；API、web running；web 为 `0.0.0.0:8081->80/tcp`。
 3. 访问 `http://localhost:8081/` 与 `http://localhost:8081/api/health`
@@ -77,20 +78,69 @@
 
 ## 审计检查
 
-- 已部署数据库只读计数：`evaluation_confirmed=2`、`primary_entity_selected=1`、`primary_entity_changed=2`。
-- 本轮尚未由控制器在 8081 触发取消和结论调整，所以 `evaluation_cancelled` 与 `policy_conclusion_changed` 现场计数为 0；必须在人工验收操作后复核。
+- 最终现场只读计数：`evaluation_cancelled=1`、`evaluation_confirmed=3`、`policy_conclusion_changed=1`、`primary_entity_selected=1`、`primary_entity_changed=2`。
+- 对上述审计载荷执行只输出计数的敏感扫描：本地敏感值、Authorization 值、provider token 形态和私钥头均为 0 匹配。
 - 指定后端回归中的审计测试已通过：取消审计断言 actor/object/reason，并确认载荷排除 provider identifier、Authorization 和 API-key；结论调整单元测试断言 `policy_conclusion_changed`；确认与主企业集成测试断言事件顺序。
 
 ## 凭据安全扫描
 
 方法：所有扫描均在内存中读取，输出仅包含命中计数和文件类型；未输出匹配行、环境变量值、请求头值或任何 secret 内容。
 
-- Git 跟踪文件：`git ls-files` 得到 229 个文件；使用本地敏感环境值精确匹配及 Authorization 值、provider token、私钥头高置信模式扫描。
+- Git 跟踪文件：`git ls-files` 得到 231 个文件；使用本地敏感环境值精确匹配及 Authorization 值、provider token、私钥头高置信模式扫描。
 - 结果：真实 provider key 精确匹配 0；Authorization 值 0；provider token 模式 0；私钥头 0。
 - 基础设施变量精确匹配 8，文件类型仅 `.example`、`.md`；逐键布尔比较确认均与 `.env.example` 公开默认值相同，不属于真实 provider secret。
 - Compose 日志：扫描 6 个服务、约 91,637 字符；本地敏感值精确匹配 0、Authorization 值 0、provider token 模式 0、私钥头 0。
 
-## 浏览器人工验收：待控制器执行
+## 控制器首次人工验收发现的生产阻塞与 0005 修复
+
+### 现象与根因
+
+- 控制器在 `/policies/16` 调整结论：空原因前端校验正常；填写原因后 POST 500。
+- API 错误明确指向 `policy_conclusion_decisions.created_at has no default`。
+- ORM `TimestampMixin` 对 `created_at`/`updated_at` 声明 `server_default=func.now()`，但 0004 迁移创建两列时只有 `nullable=False`。真实 MySQL inspector 也确认修复前两列 default 均为 `None`。
+
+### TDD 与迁移
+
+1. 新增 `test_policy_conclusion_timestamps_have_server_defaults`。
+   - RED：1 failed，迁移后的 SQLite schema 两列均不含 `CURRENT_TIMESTAMP`。
+2. 新增后续迁移 `0005_decision_timestamp_defaults.py`，revision 为 `0005_decision_timestamps`，不回写已部署 0004。
+   - upgrade：两列增加 `server_default=sa.func.now()`。
+   - downgrade：两列移除 server default。
+3. GREEN：同一聚焦测试 1 passed。
+4. Stage 2 schema 加 SQLite upgrade/downgrade/re-upgrade：7 passed。
+5. Task 8 指定后端集合：76 passed。
+
+### 真实 MySQL 与插入路径验证
+
+- `docker compose run --rm --volume "...\\backend:/app" api alembic upgrade head`：exit 0，执行 `0004_workflow_optimization -> 0005_decision_timestamps`。
+- `alembic current`：`0005_decision_timestamps (head)`。
+- inspector：`created_at` 和 `updated_at` 均为 `CURRENT_TIMESTAMP`。
+- 政策 16 当前批次后来变为 `awaiting_confirmation`，服务层结论调整因此在插入前按规则抛出 `EvaluationNotConfirmed`，没有数据库写入，不能用作浏览器成功证据。
+- 使用政策 16 的有效外键执行同一 ORM 表插入、故意省略两个时间列：flush 成功，两个时间属性均已填充；随后 rollback，没有留下决策或审计测试数据。
+- 修复提交：`16238d9 fix: add conclusion timestamp defaults`。
+- 最终 API/evaluator 镜像重建首次尝试在 604 秒工具上限处超时；缓存完成后重试 13.6 秒成功构建并切换。最终 API 镜像报告 `0005_decision_timestamps (head)`。
+
+## 控制器浏览器复验与取消显示修复
+
+### 已通过的人工项
+
+- 3 秒轮询从评估中自动刷新到待确认。
+- 建议申报显示三候选且当前深圳主体已选；空理由被前端阻止，填写理由后一次确认成功，当前结论、负责人确认来源和追加历史正确。
+- 随后带理由调整为持续关注成功；负责人调整来源、时间、前后结论和历史正确。
+- 历史“第 N 次评估”和次要批次号正确。
+- reader 可见结论来源、时间和历史；调整、确认、重评、取消、主企业写入口均为 0。
+
+### 取消显示首次失败与 TDD 修复
+
+- 为稳定测试，控制器暂停 evaluator，创建新批次并无理由取消；API/UI 操作完成后按钮消失，但页面没有“已取消”。evaluator 随后已恢复。
+- 根因：最新 cancelled 批次作为 `currentEvaluation` 被 `historicalEvaluations = evaluations.slice(1)` 排除；current 区域只渲染 active/success/failed，没有 cancelled 分支。
+- RED：将现有取消行为测试扩展为取消后必须看到“已取消”且不得看到“评估失败”；聚焦文件 1 failed / 17 passed。
+- GREEN：增加 current cancelled 状态卡，明确显示“已取消”和“第 N 次评估 · 批次 #ID”；聚焦文件 18/18 passed。
+- 完整前端：18 files / 71 tests passed；Vue TypeScript 与 Vite build exit 0，仅既有允许警告。
+- 修复提交：`f447e51 fix: show current cancelled evaluation`。web 已重建并在 8081 发布。
+- 最终人工复验 PASS：政策 16 当前评估区域显示 heading“已取消”，文案“第 7 次评估 · 批次 #26 已取消，不会继续运行。”，没有“评估失败”；reader 会话同样可见。
+
+## 浏览器人工验收：通过
 
 目标：`http://localhost:8081/policies/16`。
 
@@ -102,7 +152,7 @@
 6. 只读账号无写操作入口。
 7. 历史显示“第 N 次评估”和次要批次号。
 
-未完成项：以上 7 项全部待控制器执行；取消和结论调整完成后还需复核现场审计事件。自动化与 HTTP health 不能替代浏览器人工验收。
+未完成项：无。7 项均由控制器在 8081 完成人工验证；自动化与 HTTP health 证据作为补充，不替代上述浏览器结果。
 
 ## Deferred minors 分类
 
@@ -124,6 +174,6 @@
 
 ## Concerns
 
-- 浏览器人工验收和取消/结论调整现场审计复核仍待控制器执行。
+- 浏览器人工清单与现场审计已完成，无未完成人工项。
 - 后端 Dockerfile 的 COPY/依赖安装层次导致任意源码变化重新安装完整 dev 依赖，本轮最终构建约 412 秒；非阻断，本任务不扩大为构建优化。
-- 完整迁移名称测试的既有同名 constraint 问题继续按 ledger 延期，不影响本轮实际 MySQL 0004 upgrade 和 8081 health 结果。
+- 完整迁移名称测试的既有同名 constraint 问题继续按 ledger 延期，不影响本轮实际 MySQL 0004→0005 upgrade 和 8081 health 结果。
