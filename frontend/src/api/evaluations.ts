@@ -15,7 +15,7 @@ export interface EntityEvaluation {
 export interface EvaluationBatch {
   id: number;
   policy_version_id: number;
-  status: "pending" | "running" | "succeeded" | "awaiting_confirmation" | "confirmed" | "failed";
+  status: "pending" | "running" | "succeeded" | "awaiting_confirmation" | "confirmed" | "cancelled" | "failed";
   prompt_version: string;
   adapter_key: string;
   model_name: string | null;
@@ -25,6 +25,9 @@ export interface EvaluationBatch {
   provider_request_id?: string | null;
   input_tokens?: number | null;
   output_tokens?: number | null;
+  cancelled_by?: number | null;
+  cancelled_at?: string | null;
+  cancel_reason?: string | null;
   profile_snapshot: Array<Record<string, unknown>>;
   summary: string | null;
   key_conditions: string[] | null;
@@ -42,6 +45,10 @@ export async function getEvaluations(policyId: number): Promise<EvaluationBatch[
 
 export async function createEvaluation(policyId: number): Promise<EvaluationBatch> {
   return (await http.post<EvaluationBatch>(`/policies/${policyId}/evaluations`)).data;
+}
+
+export async function cancelEvaluation(batchId: number, reason: string | null): Promise<EvaluationBatch> {
+  return (await http.post<EvaluationBatch>(`/evaluations/${batchId}/cancellation`, { reason })).data;
 }
 
 export interface EvaluationConfirmationInput {

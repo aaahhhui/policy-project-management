@@ -26,6 +26,13 @@ export interface PolicyDetail {
   current_evaluation_batch_id: number | null; current_version: PolicyVersion;
   discoveries: PolicyDiscovery[]; attachments: PolicyAttachment[];
 }
+export type PolicyConclusion = "recommend_apply" | "watch" | "not_recommended" | "uncertain";
+export interface PolicyConclusionDecision {
+  id: number; policy_id: number; evaluation_batch_id: number;
+  previous_conclusion: PolicyConclusion; conclusion: PolicyConclusion;
+  source: "evaluation_confirmation" | "manual_override"; reason: string | null;
+  decided_by: number; decided_at: string;
+}
 export interface PolicyFilters {
   q?: string; source_id?: number; published_from?: string; published_to?: string;
   page?: number; page_size?: number;
@@ -42,4 +49,13 @@ export async function getPolicy(id: number): Promise<PolicyDetail> {
 }
 export async function getPolicyVersions(id: number): Promise<PolicyVersion[]> {
   return (await http.get<PolicyVersion[]>(`/policies/${id}/versions`)).data;
+}
+export async function getPolicyConclusionHistory(id: number): Promise<PolicyConclusionDecision[]> {
+  return (await http.get<PolicyConclusionDecision[]>(`/policies/${id}/conclusion-decisions`)).data;
+}
+export async function adjustPolicyConclusion(
+  id: number,
+  payload: { conclusion: PolicyConclusion; reason: string },
+): Promise<PolicyConclusionDecision> {
+  return (await http.post<PolicyConclusionDecision>(`/policies/${id}/conclusion-decisions`, payload)).data;
 }

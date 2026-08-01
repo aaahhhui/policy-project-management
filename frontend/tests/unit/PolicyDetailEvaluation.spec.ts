@@ -167,7 +167,10 @@ describe("PolicyDetailView evaluation", () => {
     currentUser.value = {
       id: 1, login_name: "owner", display_name: "负责人", roles: ["applicant_owner"],
     };
-    vi.mocked(getEvaluations).mockResolvedValue([succeeded, { ...succeeded, id: 29 }]);
+    vi.mocked(getEvaluations).mockResolvedValue([
+      succeeded,
+      { ...succeeded, id: 29, created_at: "2026-07-27T01:00:00Z" },
+    ]);
 
     const wrapper = mount(PolicyDetailView);
     await flushPromises();
@@ -178,6 +181,9 @@ describe("PolicyDetailView evaluation", () => {
     expect(wrapper.text()).toContain("北京适创科技有限公司");
     expect(wrapper.get("#evaluation-history-list").isVisible()).toBe(false);
     expect(wrapper.get("button[aria-expanded='false']").text()).toContain("历史评估");
+    await wrapper.get("button[aria-expanded='false']").trigger("click");
+    expect(wrapper.text()).toContain("第 1 次评估");
+    expect(wrapper.text()).toContain("批次 #29");
   });
 
   it("does not render retry for a reader when evaluation failed", async () => {

@@ -68,4 +68,30 @@ describe("EvaluationRuleDetailView", () => {
     await publish.trigger("click");
     expect(publishRuleVersion).not.toHaveBeenCalled();
   });
+
+  it("shows the public weight-total validation message when publishing is rejected", async () => {
+    vi.mocked(getEvaluationRule).mockResolvedValue({
+      ...draftRule,
+      versions: [{
+        ...draftRule.versions[0],
+        weighted_rules: [
+          { code: "TECH", name: "技术匹配", instruction: "判断技术匹配", weight: 60, enabled: true },
+          { code: "VALUE", name: "申报价值", instruction: "判断申报价值", weight: 40, enabled: true },
+        ],
+      }],
+    });
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    vi.mocked(publishRuleVersion).mockRejectedValue({
+      response: { data: { detail: { code: "rule_weight_total_invalid" } } },
+    });
+
+    const wrapper = mount(EvaluationRuleDetailView, {
+      global: { stubs: { RouterLink: { template: "<a><slot /></a>" } } },
+    });
+    await vi.dynamicImportSettled();
+    await wrapper.get("button[data-action='publish']").trigger("click");
+    await vi.dynamicImportSettled();
+
+    expect(wrapper.text()).toContain("启用的评分条件权重合计必须为 100");
+  });
 });

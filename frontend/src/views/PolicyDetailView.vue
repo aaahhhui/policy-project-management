@@ -35,6 +35,11 @@ const retryDialog = ref<HTMLElement | null>(null);
 const confirmRetryButton = ref<HTMLButtonElement | null>(null);
 const currentEvaluation = computed(() => evaluations.value[0] ?? null);
 const historicalEvaluations = computed(() => evaluations.value.slice(1));
+const attemptNumberById = computed<Record<number, number>>(() => Object.fromEntries(
+  [...evaluations.value]
+    .sort((left, right) => Date.parse(left.created_at) - Date.parse(right.created_at) || left.id - right.id)
+    .map((evaluation, index) => [evaluation.id, index + 1]),
+));
 const canRetry = computed(
   () => currentUser.value?.roles.includes("applicant_owner") ?? false,
 );
@@ -179,7 +184,7 @@ onMounted(async () => {
         <div v-if="canRetry && ['succeeded', 'awaiting_confirmation', 'confirmed', 'failed'].includes(currentEvaluation.status)" class="evaluation-actions">
           <button ref="retryButton" type="button" data-retry-evaluation @click="confirmRetryOpen = true">重新评估</button>
         </div>
-        <EvaluationHistory :evaluations="historicalEvaluations" />
+        <EvaluationHistory :evaluations="historicalEvaluations" :attempt-number-by-id="attemptNumberById" />
       </template>
       <div v-else-if="!evaluationError" class="task-state">
         <span class="state-marker" aria-hidden="true"></span>

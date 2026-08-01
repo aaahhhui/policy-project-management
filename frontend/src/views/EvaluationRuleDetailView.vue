@@ -12,6 +12,7 @@ import {
   type EvaluationRuleSet,
   type EvaluationRuleVersion,
 } from "../api/evaluationRules";
+import { businessErrorMessage } from "../api/errors";
 import { currentUser } from "../auth/state";
 
 const route = useRoute();
@@ -78,8 +79,8 @@ async function runAction(action: () => Promise<unknown>, success: string) {
     await action();
     notice.value = success;
     await loadRule();
-  } catch {
-    error.value = "操作未完成，请检查规则内容后重试。";
+  } catch (actionError) {
+    error.value = businessErrorMessage(actionError, "操作未完成，请检查规则内容后重试。");
   } finally {
     saving.value = false;
   }

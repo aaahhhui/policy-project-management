@@ -3,7 +3,10 @@ import { ref } from "vue";
 
 import type { EvaluationBatch } from "../../api/evaluations";
 
-const props = defineProps<{ evaluations: EvaluationBatch[] }>();
+const props = defineProps<{
+  evaluations: EvaluationBatch[];
+  attemptNumberById: Record<number, number>;
+}>();
 const expanded = ref(false);
 
 const statusLabels: Record<string, string> = {
@@ -12,6 +15,7 @@ const statusLabels: Record<string, string> = {
   succeeded: "已完成",
   awaiting_confirmation: "待负责人确认",
   confirmed: "已确认",
+  cancelled: "已取消",
   failed: "评估失败",
 };
 
@@ -37,7 +41,8 @@ function formatTime(value: string): string {
     <ol v-show="expanded" id="evaluation-history-list">
       <li v-for="evaluation in props.evaluations" :key="evaluation.id">
         <div>
-          <strong>批次 #{{ evaluation.id }}</strong>
+          <strong>第 {{ props.attemptNumberById[evaluation.id] }} 次评估</strong>
+          <span>批次 #{{ evaluation.id }}</span>
           <span :data-status="evaluation.status">{{ statusLabels[evaluation.status] ?? evaluation.status }}</span>
         </div>
         <time :datetime="evaluation.created_at">{{ formatTime(evaluation.created_at) }}</time>
