@@ -142,6 +142,19 @@ def test_stage2_tables_and_columns_exist(migrated_inspector: Inspector) -> None:
     assert "primary_entity_seed_code" in confirmation_columns
 
 
+def test_policy_conclusion_timestamps_have_server_defaults(
+    migrated_inspector: Inspector,
+) -> None:
+    defaults = {
+        column["name"]: column["default"]
+        for column in migrated_inspector.get_columns("policy_conclusion_decisions")
+        if column["name"] in {"created_at", "updated_at"}
+    }
+
+    assert set(defaults) == {"created_at", "updated_at"}
+    assert all("CURRENT_TIMESTAMP" in str(default).upper() for default in defaults.values())
+
+
 def test_stage2_decision_constraints_exist(migrated_inspector: Inspector) -> None:
     status_checks = {
         check["name"]: check["sqltext"]
