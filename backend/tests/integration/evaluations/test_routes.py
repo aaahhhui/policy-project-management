@@ -7,6 +7,8 @@ from app.modules.profiles.models import BusinessEntity
 
 from tests.integration.evaluations.test_service import (
     FakeFileStore,
+    MetadataAdapter,
+    SecretLeakingAdapter,
     payload,
     seed_channel,
     seed_entities,
@@ -42,6 +44,35 @@ def test_authenticated_user_can_list_evaluation_history_and_results(
     assert history[0]["conclusion"] is not None
     assert len(history[0]["entities"]) == 3
     assert all(item["evidence"] for item in history[0]["entities"])
+
+
+def test_evaluation_history_omits_internal_provider_request_id(
+    client, db, seeded_owner, seeded_owner_password
+) -> None:
+    ingestion = create_policy(db)
+    completed = EvaluationService(db).run_next(MetadataAdapter())
+    assert completed is not None
+    assert completed.provider_request_id == "deepseek-request-17"
+    login(client, "owner", seeded_owner_password)
+
+    response = client.get(f"/api/policies/{ingestion.policy_id}/evaluations")
+
+    assert response.status_code == 200
+    assert "provider_request_id" not in response.json()[0]
+
+
+def test_evaluation_history_returns_sanitized_failure_code(
+    client, db, seeded_owner, seeded_owner_password
+) -> None:
+    ingestion = create_policy(db)
+    EvaluationService(db).run_next(SecretLeakingAdapter())
+    login(client, "owner", seeded_owner_password)
+
+    response = client.get(f"/api/policies/{ingestion.policy_id}/evaluations")
+
+    assert response.status_code == 200
+    assert response.json()[0]["error_message"] == "evaluation_processing_failed"
+    assert "sk-sensitive-value" not in response.text
 
 
 def test_owner_re_evaluation_creates_new_pending_batch_without_mutating_history(

@@ -160,7 +160,6 @@ class EvaluationBatchResponse(BaseModel):
     adapter_key: str
     model_name: str | None
     retry_count: int
-    provider_request_id: str | None
     input_tokens: int | None
     output_tokens: int | None
     cancelled_by: int | None

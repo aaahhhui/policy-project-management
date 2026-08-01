@@ -1,3 +1,4 @@
+import logging
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -27,6 +28,10 @@ from app.modules.evaluations.schemas import (
 from app.modules.policies.models import Policy, PolicyVersion
 from app.modules.profiles.models import BusinessEntity
 from app.modules.profiles.service import ENTITY_ORDER
+
+
+logger = logging.getLogger(__name__)
+EVALUATION_PROCESSING_FAILED = "evaluation_processing_failed"
 
 
 class EvaluationService:
@@ -131,7 +136,6 @@ class EvaluationService:
                 "adapter_key": batch.adapter_key,
                 "model_name": batch.model_name,
                 "retry_count": batch.retry_count,
-                "provider_request_id": batch.provider_request_id,
                 "input_tokens": batch.input_tokens,
                 "output_tokens": batch.output_tokens,
                 "cancelled_by": batch.cancelled_by,
@@ -305,7 +309,7 @@ class EvaluationService:
                     or policy.current_evaluation_batch_id < current_batch.id
                 ):
                     policy.current_evaluation_batch_id = current_batch.id
-                    if policy.current_conclusion_source != "manual_override":
+                    if policy.current_conclusion_source == "system_suggestion":
                         policy.current_conclusion = result.conclusion
                         policy.conclusion_confirmed = False
                         policy.current_conclusion_source = "system_suggestion"
@@ -326,6 +330,11 @@ class EvaluationService:
     def fail_claimed(
         self, batch_id: int, claim_token: str, error: Exception
     ) -> EvaluationBatch:
+        logger.warning(
+            "Evaluation batch %s failed with %s",
+            batch_id,
+            error.__class__.__name__,
+        )
         self.db.rollback()
         with self.db.begin():
             failed_batch = self.db.scalar(
@@ -337,7 +346,7 @@ class EvaluationService:
                 raise ValueError(f"evaluation batch {batch_id} was not found")
             if failed_batch.status == "running" and failed_batch.claim_token == claim_token:
                 failed_batch.status = "failed"
-                failed_batch.error_message = (str(error) or error.__class__.__name__)[:1000]
+                failed_batch.error_message = EVALUATION_PROCESSING_FAILED
                 failed_batch.finished_at = datetime.now(UTC)
                 AuditService(self.db).record(
                     "evaluation_failed",

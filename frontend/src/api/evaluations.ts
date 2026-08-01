@@ -22,7 +22,6 @@ export interface EvaluationBatch {
   rule_version_id?: number | null;
   rule_snapshot?: Record<string, unknown> | null;
   retry_count?: number;
-  provider_request_id?: string | null;
   input_tokens?: number | null;
   output_tokens?: number | null;
   cancelled_by?: number | null;

@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 
 from app.modules.audit.models import AuditEvent
 from app.modules.evaluations.adapters.mock import MockEvaluationAdapter
-from app.modules.evaluations.models import PolicyConclusionDecision
+from app.modules.evaluations.models import EntityEvaluation, PolicyConclusionDecision
 from app.modules.evaluations.schemas import PrimaryEntityInput
 from app.modules.evaluations.service import (
     EvaluationNotConfirmed,
@@ -172,3 +172,35 @@ def test_later_evaluation_confirmation_does_not_overwrite_manual_conclusion(
     assert policy.conclusion_confirmed is True
     assert policy.current_conclusion_source == "manual_override"
     assert policy.conclusion_confirmed_at == manual_confirmed_at.replace(tzinfo=None)
+
+
+def test_model_re_evaluation_preserves_human_confirmation_projection(
+    db, seeded_owner
+) -> None:
+    service, policy, first_batch = confirmed_policy(db, seeded_owner)
+    confirmed_conclusion = policy.current_conclusion
+    confirmed_at = policy.conclusion_confirmed_at
+
+    queued = service.enqueue(first_batch.policy_version_id, seeded_owner.id)
+    db.commit()
+    completed = service.run_next(MockEvaluationAdapter())
+
+    assert completed is not None
+    assert completed.id == queued.id
+    assert completed.status == "awaiting_confirmation"
+    assert len(
+        list(
+            db.scalars(
+                select(EntityEvaluation).where(EntityEvaluation.batch_id == completed.id)
+            )
+        )
+    ) == 3
+    assert [item["id"] for item in service.history(policy.id)[:2]] == [
+        completed.id,
+        first_batch.id,
+    ]
+    assert policy.current_evaluation_batch_id == completed.id
+    assert policy.current_conclusion == confirmed_conclusion
+    assert policy.conclusion_confirmed is True
+    assert policy.current_conclusion_source == "evaluation_confirmation"
+    assert policy.conclusion_confirmed_at == confirmed_at.replace(tzinfo=None)

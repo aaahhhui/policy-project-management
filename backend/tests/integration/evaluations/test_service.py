@@ -1,7 +1,9 @@
+import logging
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 
+from app.modules.audit.models import AuditEvent
 from app.modules.evaluations.adapters.mock import MockEvaluationAdapter
 from app.modules.evaluations.contracts import EvaluationProviderResult
 from app.modules.evaluations.models import EntityEvaluation, EvaluationBatch
@@ -175,6 +177,11 @@ class InvalidAdapter:
         return {"summary": "invalid", "entities": []}
 
 
+class SecretLeakingAdapter:
+    def evaluate(self, request):
+        raise RuntimeError("provider failed with sk-sensitive-value")
+
+
 class MetadataAdapter:
     def evaluate(self, request):
         result = MockEvaluationAdapter().evaluate(request)
@@ -222,6 +229,30 @@ def test_first_failed_evaluation_is_isolated_and_keeps_pending_conclusion(db) ->
     assert policy is not None
     assert policy.current_evaluation_batch_id is None
     assert policy.current_conclusion == "pending_confirmation"
+
+
+def test_failed_evaluation_persists_public_code_and_logs_only_exception_type(
+    db, caplog
+) -> None:
+    seed_entities(db)
+    channel = seed_channel(db)
+    PolicyIngestionService(db, file_store=FakeFileStore()).ingest(payload(channel.id))
+
+    with caplog.at_level(
+        logging.WARNING, logger="app.modules.evaluations.service"
+    ):
+        failed = EvaluationService(db).run_next(SecretLeakingAdapter())
+
+    assert failed is not None
+    assert failed.status == "failed"
+    assert failed.error_message == "evaluation_processing_failed"
+    event = db.scalar(
+        select(AuditEvent).where(AuditEvent.action == "evaluation_failed")
+    )
+    assert event is not None
+    assert event.changes == {"error_code": "evaluation_processing_failed"}
+    assert "RuntimeError" in caplog.text
+    assert "sk-sensitive-value" not in caplog.text
 
 
 def test_failed_re_evaluation_preserves_previous_successful_result(db) -> None:
