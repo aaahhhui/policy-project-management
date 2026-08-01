@@ -77,3 +77,24 @@ node node_modules/vitest/vitest.mjs run tests/unit/EvaluationConfirmationForm.sp
 - 主企业历史加载失败目前静默回退为无当前主企业。
 
 以上两项为审查记录的 minor，不在 fix1 授权范围内；本轮未扩展修改。
+
+## 官方审查修复 fix2
+
+### 问题与根因
+
+fix1 虽然让确认表单能接收当前主企业 seed code，但详情页在挂载后独立启动评估历史和主企业历史请求。`evaluationLoading` 完成后立即渲染确认表单，而 `primaryEntity === null` 无法区分“主企业历史仍在加载”和“历史已加载且没有当前企业”。当评估请求先返回时，负责人可在当前 seed 尚未知的短暂窗口内无理由切换企业并提交。
+
+### 修复
+
+- 新增独立 `primaryEntityLoading` 状态；每次刷新主企业历史时先进入 loading，并在请求完成后退出。
+- 待确认评估只在主企业历史请求完成后挂载 `EvaluationConfirmationForm`。
+- 主企业历史仍 pending 时仅显示“正在加载主申报企业信息”，不渲染任何可提交确认表单。
+- 历史完成后继续使用 fix1 的当前企业预选、标示和切换理由校验。
+
+### TDD 与验证
+
+- RED：用受控 Promise 让评估先 resolve、主企业历史保持 pending；`PolicyDetailEvaluation` 18 项中新增竞态测试按预期失败，失败页面中可见可操作确认表单。
+- GREEN：同一测试文件 18/18 通过；pending 阶段无确认表单，历史 resolve 后正确预选当前企业并拦截无理由切换。
+- 完整前端 Vitest：18 files / 71 tests，PASS。
+- TypeScript/Vue 类型检查：`vue-tsc -b --noEmit`，PASS。
+- `git diff --check`：PASS。

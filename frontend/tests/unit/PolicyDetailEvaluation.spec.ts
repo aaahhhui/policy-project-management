@@ -9,6 +9,7 @@ import {
   selectPrimaryEntity,
   type EntityEvaluation,
   type EvaluationBatch,
+  type PrimaryEntityDecision,
 } from "../../src/api/evaluations";
 import {
   getPolicy,
@@ -263,6 +264,43 @@ describe("PolicyDetailView evaluation", () => {
 
     expect(wrapper.get<HTMLInputElement>('[name="primary-entity"][value="ENTITY-SUZHOU"]').element.checked).toBe(true);
     expect(wrapper.text()).toContain("苏州数算软云科技有限公司（当前主企业）");
+  });
+
+  it("waits for primary enterprise history before enabling reevaluation confirmation", async () => {
+    currentUser.value = {
+      id: 1, login_name: "owner", display_name: "负责人", roles: ["applicant_owner"],
+    };
+    vi.mocked(getEvaluations).mockResolvedValue([{
+      ...succeeded,
+      status: "awaiting_confirmation",
+      profile_snapshot: [
+        { seed_code: "ENTITY-BEIJING", legal_name: "北京适创科技有限公司" },
+        { seed_code: "ENTITY-SUZHOU", legal_name: "苏州数算软云科技有限公司" },
+        { seed_code: "ENTITY-SHENZHEN", legal_name: "深圳适创腾扬科技有限公司" },
+      ],
+    }]);
+    let resolvePrimaryHistory!: (history: PrimaryEntityDecision[]) => void;
+    vi.mocked(getPrimaryEntityHistory).mockReturnValue(new Promise((resolve) => {
+      resolvePrimaryHistory = resolve;
+    }));
+
+    const wrapper = mount(PolicyDetailView);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("正在加载主申报企业信息");
+    expect(wrapper.find("form.confirmation-form").exists()).toBe(false);
+
+    resolvePrimaryHistory([{
+      entity_seed_code: "ENTITY-BEIJING",
+      entity_legal_name: "北京适创科技有限公司",
+      is_current: true,
+    }]);
+    await flushPromises();
+
+    expect(wrapper.get<HTMLInputElement>('[name="primary-entity"][value="ENTITY-BEIJING"]').element.checked).toBe(true);
+    await wrapper.get<HTMLInputElement>('[name="primary-entity"][value="ENTITY-SUZHOU"]').setValue();
+    await wrapper.get("form.confirmation-form").trigger("submit");
+    expect(wrapper.text()).toContain("切换主申报企业后必须填写原因");
   });
 
   it("asks an owner to confirm retry and refreshes to pending state", async () => {

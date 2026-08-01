@@ -40,6 +40,7 @@ const error = ref("");
 const evaluationError = ref("");
 const evaluationLoading = ref(true);
 const primaryEntity = ref<PrimaryEntityDecision | null>(null);
+const primaryEntityLoading = ref(true);
 const conclusionHistory = ref<PolicyConclusionDecision[]>([]);
 const conclusionDecisionOpen = ref(false);
 const confirmRetryOpen = ref(false);
@@ -98,11 +99,14 @@ async function refreshEvaluations(id: number): Promise<boolean> {
 }
 
 async function refreshPrimaryEntity(id: number): Promise<void> {
+  primaryEntityLoading.value = true;
   try {
     const history = await getPrimaryEntityHistory(id);
     primaryEntity.value = history.find((decision) => decision.is_current) ?? null;
   } catch {
     primaryEntity.value = null;
+  } finally {
+    primaryEntityLoading.value = false;
   }
 }
 
@@ -299,11 +303,15 @@ onMounted(async () => {
       <template v-else-if="currentEvaluation">
         <EvaluationSummary v-if="['succeeded', 'awaiting_confirmation', 'confirmed'].includes(currentEvaluation.status)" :evaluation="currentEvaluation" />
         <EvaluationConfirmationForm
-          v-if="canRetry && currentEvaluation.status === 'awaiting_confirmation'"
+          v-if="canRetry && currentEvaluation.status === 'awaiting_confirmation' && !primaryEntityLoading"
           :evaluation="currentEvaluation"
           :current-primary-entity-seed-code="primaryEntity?.entity_seed_code ?? null"
           @confirmed="refreshConclusionState(Number(route.params.id))"
         />
+        <div v-else-if="canRetry && currentEvaluation.status === 'awaiting_confirmation'" class="task-state" role="status">
+          <span class="state-marker" aria-hidden="true"></span>
+          <div><h2>正在加载主申报企业信息…</h2><p>加载完成后即可确认本次评估。</p></div>
+        </div>
         <PrimaryEntitySelector
           v-if="canRetry && currentEvaluation.status === 'confirmed' && policy"
           :policy-id="policy.id"
