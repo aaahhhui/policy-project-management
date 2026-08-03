@@ -373,3 +373,16 @@
 - 仍保留的 ledger minor：取消状态 constraint 缺少显式迁移断言；取消输入未 `extra=forbid`；安全审计测试未注入代表性 Authorization/API-key 值；结论审计断言未覆盖 actor 与完整 changes；结论路由成功响应未断言完整契约；完整迁移名称测试仍受跨迁移复用 `evaluation_status_v2_code` 的既有问题影响；未知/畸形错误回退缺少直接自动化；主企业与结论历史请求失败仍静默降级为空状态。
 - 已在 Task 7 收口、不再延期的两项：取消失败 fallback 已改为中文；取消弹窗焦点环已包含可选原因 textarea。
 - 最终发布版本已包含 `0005_decision_timestamps`、`f447e51` 与 `7bba272`；仅重建 web 后 fresh 状态为 MySQL、collector、evaluator、scheduler healthy，API/web running，0005 head，8081 根路径 200、health `ok`。后端 Dockerfile 在任意源码变化后重新安装完整 dev 依赖，0005 首次重建曾在 604 秒工具时限处超时，缓存重试后成功；本任务不扩大为无关构建优化。
+
+## 24. 2026-08-03 Stage 2 最终合并与 Stage 3 启动基线
+
+- Stage 2 整分支最终审查确认并修复三项重要问题：模型重评不得覆盖 `evaluation_confirmation` 或 `manual_override` 人工结论；公开评估历史不得返回 `provider_request_id`；公开失败信息和审计载荷不得保存任意内部异常正文。最终修复提交为 `4b6d614 fix: secure evaluation history and decisions`，针对性复审结论为通过，无剩余 Critical、Important 或 Minor。
+- PR 依赖链已核实为 `main → docs/stage2-evaluation-decision-plan → feature/stage2-evaluation-decision-loop`。计划分支和功能分支已按祖先关系使用 `--ff-only` 依次合入 `main`；远端 `main`、计划分支和功能分支现均指向 `4b6d6142ae9c49bfcdbfa5ce92950b5b703cff34`，PR #3 的堆叠依赖已消解。
+- 合并后 fresh 验证：后端 Stage 2 指定回归集合 80 项通过；前端 19 个测试文件、73 项通过；Vue TypeScript 检查和 Vite 生产构建退出 0。Vite 仍只有既有第三方 PURE 注释及主 chunk 超过 500 kB 的非阻断警告。
+- 8081 最终运行状态：根路径 HTTP 200，`/api/health` 返回 `status=ok`；MySQL、collector、evaluator、scheduler healthy，API 与 web running；Alembic 为 `0005_decision_timestamps (head)`。
+- Stage 2 隔离工作树 `C:\codex\testproduct\.worktrees\stage2-evaluation-decision-loop` 暂时保留，因为当前 8081 Docker Compose 验收环境仍由该目录管理；在迁移 Compose 管理入口前不得直接删除该工作树。
+- 主工作树存在未跟踪的 `.pnpm-store/` 本地依赖缓存，合并过程中未删除、覆盖或提交。
+- 下一阶段正式进入 Stage 3“政策转项目与项目台账”。先完成需求澄清和设计确认，再制定开发计划，不直接开始编码。
+- Stage 3 初始范围：仅符合条件的政策可转项目；创建项目时绑定政策、唯一主申报企业、负责人和对接人；同一政策在 MVP 中最多对应一个项目；项目状态按 `待申报 → 已提交 → 成功 / 未通过 / 终止` 流转；提供项目列表、搜索筛选、分页和详情；申报负责人可维护全部项目，对接人只能更新自己负责的项目；状态、日期、说明及操作者必须审计留痕；政策转项目后同步展示业务状态。
+- Stage 3 暂不并入：企业微信通知、企业档案编辑、新增政策来源、五来源覆盖率扩展、备份恢复演练和正式生产迁移。这些事项在 Stage 3 核心闭环完成后按 P0 优先级继续收口。
+- Stage 3 设计必须先验证 PRD 中 `PROJ-01` 至 `PROJ-13`、政策转项目条件、权限边界、状态校验、幂等与审计要求，并明确与现有政策结论及主申报企业决策的接口。
