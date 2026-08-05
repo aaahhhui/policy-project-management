@@ -11,6 +11,7 @@ from app.modules.evaluation_rules import models as evaluation_rule_models
 from app.modules.evaluations import models as evaluation_models
 from app.modules.policies import models as policy_models
 from app.modules.profiles import models as profile_models
+from app.modules.projects import models as project_models
 from app.modules.sources import models as source_models
 
 config = context.config
@@ -25,6 +26,7 @@ _MODEL_MODULES = (
     evaluation_models,
     policy_models,
     profile_models,
+    project_models,
     source_models,
 )
 target_metadata = Base.metadata
