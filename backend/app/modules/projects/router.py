@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.db.session import get_db
 from app.modules.auth.dependencies import get_current_user
@@ -90,6 +90,9 @@ def project_user_options(actor: Owner, db: Session = Depends(get_db)) -> list[Pr
             role=min((role.code for role in user.roles), default=None),
         )
         for user in db.scalars(
-            select(User).where(User.is_active.is_(True)).order_by(User.display_name, User.id)
+            select(User)
+            .options(selectinload(User.roles))
+            .where(User.is_active.is_(True))
+            .order_by(User.display_name, User.id)
         )
     ]
