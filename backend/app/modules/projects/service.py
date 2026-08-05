@@ -22,7 +22,11 @@ from app.modules.projects.errors import (
     ProjectWriteForbidden,
 )
 from app.modules.projects.models import Project, ProjectMember, ProjectStatusHistory
-from app.modules.projects.schemas import ProjectCreateInput
+from app.modules.projects.schemas import (
+    ProjectCreateInput,
+    ProjectDetail,
+    ProjectMemberDetail,
+)
 
 
 def _creation_fingerprint(
@@ -61,7 +65,7 @@ class ProjectService:
         payload: ProjectCreateInput,
         idempotency_key: str,
         actor: User,
-    ) -> Project:
+    ) -> ProjectDetail:
         policy = self.db.scalar(
             select(Policy).where(Policy.id == policy_id).with_for_update()
         )
@@ -86,7 +90,7 @@ class ProjectService:
         )
         if existing_key is not None:
             if existing_key.creation_request_fingerprint == fingerprint:
-                return existing_key
+                return self._detail(existing_key)
             raise IdempotencyKeyReused()
 
         if not policy.conclusion_confirmed or policy.current_conclusion != "recommend_apply":
@@ -177,10 +181,12 @@ class ProjectService:
                 )
                 self.db.flush()
         except IntegrityError:
-            return self._resolve_creation_race(
-                policy_id=policy.id,
-                idempotency_key=idempotency_key,
-                fingerprint=fingerprint,
+            return self._detail(
+                self._resolve_creation_race(
+                    policy_id=policy.id,
+                    idempotency_key=idempotency_key,
+                    fingerprint=fingerprint,
+                )
             )
 
         AuditService(self.db).record(
@@ -197,7 +203,51 @@ class ProjectService:
             policy.id,
             changes={"project_id": project.id},
         )
-        return project
+        return self._detail(project)
+
+    def _detail(self, project: Project) -> ProjectDetail:
+        members = list(
+            self.db.scalars(
+                select(ProjectMember)
+                .where(ProjectMember.project_id == project.id)
+                .order_by(ProjectMember.id)
+            )
+        )
+        warnings: list[str] = []
+        if project.deadline_on is None:
+            warnings.append("deadline_unknown")
+        elif project.deadline_on < date.today():
+            warnings.append("deadline_expired")
+        return ProjectDetail(
+            id=project.id,
+            policy_id=project.policy_id,
+            name=project.name,
+            primary_entity_decision_id=project.primary_entity_decision_id,
+            primary_entity_seed_code=project.primary_entity_seed_code,
+            primary_entity_legal_name=project.primary_entity_legal_name,
+            applicant_owner_id=project.applicant_owner_id,
+            applicant_owner_display_name=project.applicant_owner_display_name,
+            liaison_user_id=project.liaison_user_id,
+            liaison_display_name=project.liaison_display_name,
+            status=project.status,
+            deadline_on=project.deadline_on,
+            submitted_on=project.submitted_on,
+            result_on=project.result_on,
+            progress_note=project.progress_note,
+            result_note=project.result_note,
+            termination_note=project.termination_note,
+            version=project.version,
+            members=[
+                ProjectMemberDetail(
+                    id=member.id,
+                    user_id=member.user_id,
+                    display_name=member.member_display_name,
+                    added_at=member.added_at,
+                )
+                for member in members
+            ],
+            conversion_warnings=warnings,
+        )
 
     def _resolve_creation_race(
         self, *, policy_id: int, idempotency_key: str, fingerprint: str

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 ProjectStatus = Literal[
     "pending_application", "submitted", "succeeded", "rejected", "terminated"
 ]
+ProjectConversionWarning = Literal["deadline_expired", "deadline_unknown"]
 
 
 def _trim_optional_string(value: object) -> object:
@@ -112,3 +113,37 @@ class ProjectPrimaryEntityCorrectionInput(BaseModel):
     @classmethod
     def trim_reason(cls, value: object) -> object:
         return _trim_optional_string(value)
+
+
+class ProjectMemberDetail(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    id: int
+    user_id: int
+    display_name: str
+    added_at: datetime
+
+
+class ProjectDetail(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    id: int
+    policy_id: int
+    name: str
+    primary_entity_decision_id: int
+    primary_entity_seed_code: str
+    primary_entity_legal_name: str
+    applicant_owner_id: int
+    applicant_owner_display_name: str
+    liaison_user_id: int
+    liaison_display_name: str
+    status: ProjectStatus
+    deadline_on: date | None
+    submitted_on: date | None
+    result_on: date | None
+    progress_note: str | None
+    result_note: str | None
+    termination_note: str | None
+    version: int
+    members: list[ProjectMemberDetail]
+    conversion_warnings: list[ProjectConversionWarning]

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from sqlalchemy import func, select
@@ -15,7 +15,7 @@ from app.modules.projects.errors import (
 )
 from app.modules.audit.models import AuditEvent
 from app.modules.projects.models import Project, ProjectMember, ProjectStatusHistory
-from app.modules.projects.schemas import ProjectCreateInput
+from app.modules.projects.schemas import ProjectCreateInput, ProjectDetail
 from app.modules.projects.service import ProjectService
 from tests.helpers.projects import (
     create_confirmed_recommend_policy,
@@ -73,6 +73,63 @@ def test_conversion_creates_project_members_history_and_audits(db) -> None:
         policy.current_conclusion_source,
         policy.conclusion_confirmed_at,
     ) == conclusion_before
+
+
+def test_conversion_and_equivalent_retry_return_conversion_detail_contract(db) -> None:
+    owner, liaison, policy, _ = _eligible(db)
+    member = create_user(db, login_name="member-detail", display_name="Member", roles=())
+    service = ProjectService(db)
+    payload = _payload(
+        liaison_user_id=liaison.id,
+        member_user_ids=[member.id],
+        deadline_on=date.today(),
+    )
+
+    first = service.convert_policy(
+        policy_id=policy.id,
+        payload=payload,
+        idempotency_key="conversion-detail-0001",
+        actor=owner,
+    )
+    db.commit()
+    second = service.convert_policy(
+        policy_id=policy.id,
+        payload=payload,
+        idempotency_key="conversion-detail-0001",
+        actor=owner,
+    )
+
+    assert isinstance(first, ProjectDetail)
+    assert isinstance(second, ProjectDetail)
+    assert second.id == first.id
+    assert {
+        "id",
+        "policy_id",
+        "name",
+        "status",
+        "version",
+        "conversion_warnings",
+        "applicant_owner_id",
+        "applicant_owner_display_name",
+        "liaison_user_id",
+        "liaison_display_name",
+        "deadline_on",
+        "members",
+    } <= first.model_dump().keys()
+    assert first.policy_id == policy.id
+    assert first.name == "Eligible policy"
+    assert first.status == "pending_application"
+    assert first.version == 1
+    assert first.conversion_warnings == []
+    assert first.deadline_on == date.today()
+    assert (first.applicant_owner_id, first.applicant_owner_display_name) == (
+        owner.id,
+        "Owner",
+    )
+    assert (first.liaison_user_id, first.liaison_display_name) == (liaison.id, "Liaison")
+    assert [(item.user_id, item.display_name) for item in first.members] == [
+        (member.id, "Member")
+    ]
 
 
 def test_unconfirmed_policy_is_not_convertible(db) -> None:
@@ -148,8 +205,13 @@ def test_inactive_liaison_or_member_is_rejected(db, inactive_target: str) -> Non
         )
 
 
-@pytest.mark.parametrize("deadline_on", [date(2026, 8, 4), None])
-def test_expired_or_unknown_deadline_does_not_block_conversion(db, deadline_on) -> None:
+@pytest.mark.parametrize(
+    ("deadline_on", "warning"),
+    [(date.today() - timedelta(days=1), "deadline_expired"), (None, "deadline_unknown")],
+)
+def test_expired_or_unknown_deadline_does_not_block_conversion(
+    db, deadline_on, warning: str
+) -> None:
     owner, liaison, policy, _ = _eligible(db, deadline_on=deadline_on)
 
     result = ProjectService(db).convert_policy(
@@ -160,6 +222,7 @@ def test_expired_or_unknown_deadline_does_not_block_conversion(db, deadline_on) 
     )
 
     assert result.deadline_on == deadline_on
+    assert result.conversion_warnings == [warning]
 
 
 def test_existing_project_returns_business_conflict(db) -> None:
