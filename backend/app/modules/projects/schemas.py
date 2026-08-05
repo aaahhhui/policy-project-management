@@ -124,6 +124,13 @@ class ProjectMemberDetail(BaseModel):
     added_at: datetime
 
 
+class ProjectUserOption(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    id: int
+    display_name: str
+
+
 class ProjectDetail(BaseModel):
     model_config = ConfigDict(extra="forbid", from_attributes=True)
 
