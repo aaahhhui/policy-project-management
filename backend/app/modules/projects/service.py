@@ -72,6 +72,9 @@ class ProjectService:
         if policy is None:
             raise PolicyNotConvertible()
 
+        if not actor.is_active or "applicant_owner" not in {role.code for role in actor.roles}:
+            raise ProjectWriteForbidden()
+
         effective_name = payload.name if payload.name is not None else policy.title
         effective_deadline_on = (
             payload.deadline_on if payload.deadline_on is not None else policy.deadline_on
@@ -110,9 +113,6 @@ class ProjectService:
         if existing_project is not None:
             raise PolicyAlreadyConverted(project_id=existing_project.id)
 
-        if not actor.is_active or "applicant_owner" not in {role.code for role in actor.roles}:
-            raise ProjectWriteForbidden()
-
         people = {
             user.id: user
             for user in self.db.scalars(
@@ -148,6 +148,7 @@ class ProjectService:
             version=1,
             created_by=actor.id,
         )
+        self._ensure_sqlite_transaction()
         try:
             with self.db.begin_nested():
                 self.db.add(project)
@@ -204,6 +205,14 @@ class ProjectService:
             changes={"project_id": project.id},
         )
         return self._detail(project)
+
+    def _ensure_sqlite_transaction(self) -> None:
+        connection = self.db.connection()
+        if connection.dialect.name != "sqlite":
+            return
+        raw_connection = connection.connection.driver_connection
+        if not raw_connection.in_transaction:
+            connection.exec_driver_sql("BEGIN")
 
     def _detail(self, project: Project) -> ProjectDetail:
         members = list(

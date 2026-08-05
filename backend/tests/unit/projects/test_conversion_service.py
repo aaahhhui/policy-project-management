@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
+from sqlalchemy.orm import Session
 
 from app.modules.projects.errors import (
     IdempotencyKeyReused,
@@ -68,11 +69,60 @@ def test_conversion_creates_project_members_history_and_audits(db) -> None:
         "project_created",
         "policy_converted_to_project",
     }
+    assert db.scalar(select(func.count(AuditEvent.id))) == 2
     assert (
         policy.current_conclusion,
         policy.current_conclusion_source,
         policy.conclusion_confirmed_at,
     ) == conclusion_before
+
+
+def test_conversion_remains_atomic_until_the_caller_commits(db) -> None:
+    owner, liaison, policy, _ = _eligible(db)
+    db.commit()
+
+    ProjectService(db).convert_policy(
+        policy_id=policy.id,
+        payload=_payload(liaison_user_id=liaison.id),
+        idempotency_key="conversion-atomic-0001",
+        actor=owner,
+    )
+
+    assert db.scalar(select(func.count(Project.id))) == 1
+    assert db.scalar(select(func.count(ProjectStatusHistory.id))) == 1
+    assert db.scalar(select(func.count(AuditEvent.id))) == 2
+    db.rollback()
+    with Session(db.get_bind()) as verifier:
+        assert verifier.scalar(select(func.count(Project.id))) == 0
+        assert verifier.scalar(select(func.count(ProjectStatusHistory.id))) == 0
+        assert verifier.scalar(select(func.count(AuditEvent.id))) == 0
+
+
+def test_audit_failure_rolls_back_every_conversion_write(db) -> None:
+    owner, liaison, policy, _ = _eligible(db)
+    db.commit()
+
+    def reject_policy_audit(_mapper, _connection, target) -> None:
+        if target.action == "policy_converted_to_project":
+            raise RuntimeError("audit persistence failed")
+
+    event.listen(AuditEvent, "before_insert", reject_policy_audit)
+    try:
+        with pytest.raises(RuntimeError, match="audit persistence failed"):
+            ProjectService(db).convert_policy(
+                policy_id=policy.id,
+                payload=_payload(liaison_user_id=liaison.id),
+                idempotency_key="conversion-atomic-0002",
+                actor=owner,
+            )
+    finally:
+        event.remove(AuditEvent, "before_insert", reject_policy_audit)
+
+    db.rollback()
+    with Session(db.get_bind()) as verifier:
+        assert verifier.scalar(select(func.count(Project.id))) == 0
+        assert verifier.scalar(select(func.count(ProjectStatusHistory.id))) == 0
+        assert verifier.scalar(select(func.count(AuditEvent.id))) == 0
 
 
 def test_conversion_and_equivalent_retry_return_conversion_detail_contract(db) -> None:
@@ -262,6 +312,34 @@ def test_equivalent_retry_returns_one_project_and_one_history(db) -> None:
     assert second.id == first.id
     assert db.scalar(select(func.count(Project.id))) == 1
     assert db.scalar(select(func.count(ProjectStatusHistory.id))) == 1
+    assert db.scalar(select(func.count(AuditEvent.id))) == 2
+
+
+@pytest.mark.parametrize("actor_kind", ["non_owner", "inactive_owner"])
+def test_equivalent_retry_requires_an_active_applicant_owner(db, actor_kind: str) -> None:
+    owner, liaison, policy, _ = _eligible(db)
+    service = ProjectService(db)
+    payload = _payload(liaison_user_id=liaison.id)
+    service.convert_policy(
+        policy_id=policy.id,
+        payload=payload,
+        idempotency_key=f"conversion-authorization-{actor_kind}",
+        actor=owner,
+    )
+    db.commit()
+    if actor_kind == "non_owner":
+        actor = create_user(db, login_name="retry-reader", display_name="Reader", roles=())
+    else:
+        owner.is_active = False
+        actor = owner
+
+    with pytest.raises(ProjectWriteForbidden):
+        service.convert_policy(
+            policy_id=policy.id,
+            payload=payload,
+            idempotency_key=f"conversion-authorization-{actor_kind}",
+            actor=actor,
+        )
 
 
 def test_same_key_with_changed_request_is_rejected(db) -> None:
