@@ -16,9 +16,9 @@ app.include_router(auth_router)
 app.include_router(collection_router)
 app.include_router(evaluations_router)
 app.include_router(evaluation_rules_router)
-app.include_router(policies_router)
 app.include_router(profiles_router)
 app.include_router(projects_router)
+app.include_router(policies_router)
 app.include_router(sources_router)
 
 

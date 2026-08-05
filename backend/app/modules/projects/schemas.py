@@ -132,6 +132,149 @@ class ProjectUserOption(BaseModel):
     role: str | None
 
 
+class ProjectFilters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    q: str | None = Field(default=None, max_length=512)
+    primary_entity_seed_code: str | None = Field(default=None, max_length=64)
+    liaison_user_id: int | None = Field(default=None, gt=0)
+    status: ProjectStatus | None = None
+    deadline_from: date | None = None
+    deadline_to: date | None = None
+    mine: bool = False
+    page: int = Field(default=1, ge=1)
+    page_size: Literal[10, 20, 50] = 20
+
+    @field_validator("q", "primary_entity_seed_code", mode="before")
+    @classmethod
+    def trim_filter_strings(cls, value: object) -> object:
+        return _trim_optional_string(value)
+
+
+class ProjectCapabilitiesResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    can_edit_project: bool
+    can_update_progress: bool
+    can_transition: bool
+    can_correct_status: bool
+    can_correct_primary_entity: bool
+
+
+class ProjectPerson(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    display_name: str
+
+
+class ProjectPolicySnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    title: str
+    conclusion: str
+    conclusion_source: str
+    conclusion_confirmed_at: datetime | None
+
+
+class ProjectEntitySnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision_id: int
+    seed_code: str
+    legal_name: str
+
+
+class ProjectDates(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    deadline_on: date | None
+    submitted_on: date | None
+    result_on: date | None
+
+
+class ProjectNotes(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    progress_note: str | None
+    result_note: str | None
+    termination_note: str | None
+
+
+class ProjectStatusHistoryDetail(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    action: str
+    previous_status: ProjectStatus | None
+    new_status: ProjectStatus
+    actor: ProjectPerson
+    reason: str | None
+    related_date: date | None
+    before_values: dict[str, object]
+    after_values: dict[str, object]
+    from_version: int
+    to_version: int
+    occurred_at: datetime
+
+
+class ProjectListItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    policy_id: int
+    name: str
+    policy_title: str
+    primary_entity_seed_code: str
+    primary_entity_legal_name: str
+    applicant_owner: ProjectPerson
+    liaison: ProjectPerson
+    status: ProjectStatus
+    deadline_on: date | None
+    updated_at: datetime
+    version: int
+    capabilities: ProjectCapabilitiesResponse
+
+
+class ProjectPage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[ProjectListItem]
+    page: int
+    page_size: int
+    total: int
+
+
+class ProjectSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    total: int
+    by_status: dict[str, int]
+    convertible_policy_count: int
+
+
+class ConvertiblePolicyItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    title: str
+    primary_entity_decision_id: int
+    primary_entity_seed_code: str
+    primary_entity_legal_name: str
+    deadline_on: date | None
+    conversion_warnings: list[ProjectConversionWarning]
+
+
+class ConvertiblePolicyPage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[ConvertiblePolicyItem]
+    page: int
+    page_size: int
+    total: int
+
+
 class ProjectDetail(BaseModel):
     model_config = ConfigDict(extra="forbid", from_attributes=True)
 
@@ -155,3 +298,11 @@ class ProjectDetail(BaseModel):
     version: int
     members: list[ProjectMemberDetail]
     conversion_warnings: list[ProjectConversionWarning]
+    policy: ProjectPolicySnapshot
+    entity: ProjectEntitySnapshot
+    applicant_owner: ProjectPerson
+    liaison: ProjectPerson
+    dates: ProjectDates
+    notes: ProjectNotes
+    status_history: list[ProjectStatusHistoryDetail]
+    capabilities: ProjectCapabilitiesResponse

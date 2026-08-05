@@ -1,6 +1,7 @@
-from typing import Annotated
+from datetime import date
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -16,9 +17,13 @@ from app.modules.projects.errors import (
 from app.modules.projects.schemas import (
     ProjectCreateInput,
     ProjectDetail,
+    ProjectFilters,
+    ProjectPage,
+    ProjectSummary,
     ProjectUserOption,
+    ConvertiblePolicyPage,
 )
-from app.modules.projects.service import ProjectService
+from app.modules.projects.service import ProjectQueryService, ProjectService
 
 router = APIRouter(tags=["projects"])
 Owner = Annotated[User, Depends(get_current_user)]
@@ -50,6 +55,71 @@ def _project_error_response(error: ProjectError) -> HTTPException:
     )
 
 
+def _require_applicant_owner(actor: User) -> None:
+    if not actor.is_active or "applicant_owner" not in {role.code for role in actor.roles}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "project_write_forbidden"},
+        )
+
+
+@router.get("/api/projects/summary", response_model=ProjectSummary)
+def project_summary(actor: Owner, db: Session = Depends(get_db)) -> ProjectSummary:
+    return ProjectQueryService(db).summary(actor=actor)
+
+
+@router.get("/api/projects", response_model=ProjectPage)
+def list_projects(
+    actor: Owner,
+    q: str | None = None,
+    entity_seed_code: str | None = None,
+    primary_entity_seed_code: str | None = None,
+    liaison_user_id: int | None = Query(default=None, gt=0),
+    status_code: str | None = Query(default=None, alias="status"),
+    deadline_from: date | None = None,
+    deadline_to: date | None = None,
+    mine: bool = False,
+    page: int = Query(default=1, ge=1),
+    page_size: Literal["10", "20", "50"] = Query(default="20"),
+    db: Session = Depends(get_db),
+) -> ProjectPage:
+    return ProjectQueryService(db).list_projects(
+        filters=ProjectFilters(
+            q=q,
+            primary_entity_seed_code=entity_seed_code or primary_entity_seed_code,
+            liaison_user_id=liaison_user_id,
+            status=status_code,
+            deadline_from=deadline_from,
+            deadline_to=deadline_to,
+            mine=mine,
+            page=page,
+            page_size=int(page_size),
+        ),
+        actor=actor,
+    )
+
+
+@router.get("/api/projects/{project_id}", response_model=ProjectDetail)
+def project_detail(
+    project_id: int, actor: Owner, db: Session = Depends(get_db)
+) -> ProjectDetail:
+    try:
+        return ProjectQueryService(db).detail(project_id, actor=actor)
+    except LookupError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found") from error
+
+
+@router.get("/api/policies/convertible", response_model=ConvertiblePolicyPage)
+def convertible_policies(
+    actor: Owner,
+    page: int = Query(default=1, ge=1),
+    page_size: Literal["10", "20", "50"] = Query(default="20"),
+    db: Session = Depends(get_db),
+) -> ConvertiblePolicyPage:
+    _require_applicant_owner(actor)
+    return ProjectQueryService(db).convertible_policies(page=page, page_size=int(page_size))
+
+
 @router.post(
     "/api/policies/{policy_id}/project",
     response_model=ProjectDetail,
@@ -78,11 +148,7 @@ def convert_policy(
 
 @router.get("/api/users/project-options", response_model=list[ProjectUserOption])
 def project_user_options(actor: Owner, db: Session = Depends(get_db)) -> list[ProjectUserOption]:
-    if not actor.is_active or "applicant_owner" not in {role.code for role in actor.roles}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "project_write_forbidden"},
-        )
+    _require_applicant_owner(actor)
     return [
         ProjectUserOption(
             id=user.id,

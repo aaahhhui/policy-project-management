@@ -4,7 +4,7 @@ import hashlib
 import json
 from datetime import UTC, date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -22,10 +22,24 @@ from app.modules.projects.errors import (
     ProjectWriteForbidden,
 )
 from app.modules.projects.models import Project, ProjectMember, ProjectStatusHistory
+from app.modules.projects.permissions import capabilities_for
 from app.modules.projects.schemas import (
+    ConvertiblePolicyItem,
+    ConvertiblePolicyPage,
     ProjectCreateInput,
+    ProjectCapabilitiesResponse,
+    ProjectDates,
     ProjectDetail,
+    ProjectEntitySnapshot,
+    ProjectFilters,
+    ProjectListItem,
     ProjectMemberDetail,
+    ProjectNotes,
+    ProjectPage,
+    ProjectPerson,
+    ProjectPolicySnapshot,
+    ProjectStatusHistoryDetail,
+    ProjectSummary,
 )
 
 
@@ -93,7 +107,7 @@ class ProjectService:
         )
         if existing_key is not None:
             if existing_key.creation_request_fingerprint == fingerprint:
-                return self._detail(existing_key)
+                return ProjectQueryService(self.db).detail(existing_key.id, actor=actor)
             raise IdempotencyKeyReused()
 
         if not policy.conclusion_confirmed or policy.current_conclusion != "recommend_apply":
@@ -182,12 +196,13 @@ class ProjectService:
                 )
                 self.db.flush()
         except IntegrityError:
-            return self._detail(
+            return ProjectQueryService(self.db).detail(
                 self._resolve_creation_race(
                     policy_id=policy.id,
                     idempotency_key=idempotency_key,
                     fingerprint=fingerprint,
-                )
+                ).id,
+                actor=actor,
             )
 
         AuditService(self.db).record(
@@ -204,7 +219,7 @@ class ProjectService:
             policy.id,
             changes={"project_id": project.id},
         )
-        return self._detail(project)
+        return ProjectQueryService(self.db).detail(project.id, actor=actor)
 
     def _ensure_sqlite_transaction(self) -> None:
         connection = self.db.connection()
@@ -214,7 +229,84 @@ class ProjectService:
         if not raw_connection.in_transaction:
             connection.exec_driver_sql("BEGIN")
 
-    def _detail(self, project: Project) -> ProjectDetail:
+    def _resolve_creation_race(
+        self, *, policy_id: int, idempotency_key: str, fingerprint: str
+    ) -> Project:
+        existing_key = self.db.scalar(
+            select(Project).where(Project.creation_idempotency_key == idempotency_key)
+        )
+        if existing_key is not None:
+            if existing_key.creation_request_fingerprint == fingerprint:
+                return existing_key
+            raise IdempotencyKeyReused()
+        existing_project = self.db.scalar(
+            select(Project).where(Project.policy_id == policy_id)
+        )
+        if existing_project is not None:
+            raise PolicyAlreadyConverted(project_id=existing_project.id)
+        raise PolicyAlreadyConverted()
+
+
+class ProjectQueryService:
+    def __init__(self, db: Session) -> None:
+        self.db = db
+
+    def summary(self, *, actor: User) -> ProjectSummary:
+        del actor  # Summaries intentionally describe the global ledger for every reader.
+        from app.modules.projects.models import PROJECT_STATUSES
+
+        total = self.db.scalar(select(func.count()).select_from(Project)) or 0
+        counts = dict(
+            self.db.execute(
+                select(Project.status, func.count()).group_by(Project.status)
+            ).all()
+        )
+        return ProjectSummary(
+            total=total,
+            by_status={status: counts.get(status, 0) for status in PROJECT_STATUSES},
+            convertible_policy_count=self.db.scalar(
+                select(func.count()).select_from(self._convertible_statement().subquery())
+            )
+            or 0,
+        )
+
+    def list_projects(self, *, filters: ProjectFilters, actor: User) -> ProjectPage:
+        id_statement = self._project_id_statement(filters, actor=actor)
+        total = self.db.scalar(
+            select(func.count()).select_from(id_statement.order_by(None).subquery())
+        ) or 0
+        ids = list(
+            self.db.scalars(
+                id_statement.order_by(Project.updated_at.desc(), Project.id.desc())
+                .offset((filters.page - 1) * filters.page_size)
+                .limit(filters.page_size)
+            )
+        )
+        if not ids:
+            return ProjectPage(items=[], page=filters.page, page_size=filters.page_size, total=total)
+
+        display_rows = self.db.execute(
+            select(Project, Policy)
+            .join(Policy, Policy.id == Project.policy_id)
+            .where(Project.id.in_(ids))
+        ).all()
+        by_id = {project.id: (project, policy) for project, policy in display_rows}
+        return ProjectPage(
+            items=[self._list_item(*by_id[project_id], actor=actor) for project_id in ids],
+            page=filters.page,
+            page_size=filters.page_size,
+            total=total,
+        )
+
+    def detail(self, project_id: int, *, actor: User) -> ProjectDetail:
+        row = self.db.execute(
+            select(Project, Policy)
+            .join(Policy, Policy.id == Project.policy_id)
+            .where(Project.id == project_id)
+        ).one_or_none()
+        if row is None:
+            raise LookupError("project not found")
+        project, policy = row
         members = list(
             self.db.scalars(
                 select(ProjectMember)
@@ -222,11 +314,13 @@ class ProjectService:
                 .order_by(ProjectMember.id)
             )
         )
-        warnings: list[str] = []
-        if project.deadline_on is None:
-            warnings.append("deadline_unknown")
-        elif project.deadline_on < date.today():
-            warnings.append("deadline_expired")
+        history = list(
+            self.db.scalars(
+                select(ProjectStatusHistory)
+                .where(ProjectStatusHistory.project_id == project.id)
+                .order_by(ProjectStatusHistory.occurred_at, ProjectStatusHistory.id)
+            )
+        )
         return ProjectDetail(
             id=project.id,
             policy_id=project.policy_id,
@@ -255,22 +349,158 @@ class ProjectService:
                 )
                 for member in members
             ],
-            conversion_warnings=warnings,
+            conversion_warnings=self._warnings(project.deadline_on),
+            policy=ProjectPolicySnapshot(
+                id=policy.id,
+                title=policy.title,
+                conclusion=policy.current_conclusion,
+                conclusion_source=policy.current_conclusion_source,
+                conclusion_confirmed_at=policy.conclusion_confirmed_at,
+            ),
+            entity=ProjectEntitySnapshot(
+                decision_id=project.primary_entity_decision_id,
+                seed_code=project.primary_entity_seed_code,
+                legal_name=project.primary_entity_legal_name,
+            ),
+            applicant_owner=ProjectPerson(
+                id=project.applicant_owner_id,
+                display_name=project.applicant_owner_display_name,
+            ),
+            liaison=ProjectPerson(
+                id=project.liaison_user_id, display_name=project.liaison_display_name
+            ),
+            dates=ProjectDates(
+                deadline_on=project.deadline_on,
+                submitted_on=project.submitted_on,
+                result_on=project.result_on,
+            ),
+            notes=ProjectNotes(
+                progress_note=project.progress_note,
+                result_note=project.result_note,
+                termination_note=project.termination_note,
+            ),
+            status_history=[
+                ProjectStatusHistoryDetail(
+                    id=entry.id,
+                    action=entry.action,
+                    previous_status=entry.previous_status,
+                    new_status=entry.new_status,
+                    actor=ProjectPerson(
+                        id=entry.actor_id, display_name=entry.actor_display_name
+                    ),
+                    reason=entry.reason,
+                    related_date=entry.related_date,
+                    before_values=entry.before_values,
+                    after_values=entry.after_values,
+                    from_version=entry.from_version,
+                    to_version=entry.to_version,
+                    occurred_at=entry.occurred_at,
+                )
+                for entry in history
+            ],
+            capabilities=self._capabilities(project, actor),
         )
 
-    def _resolve_creation_race(
-        self, *, policy_id: int, idempotency_key: str, fingerprint: str
-    ) -> Project:
-        existing_key = self.db.scalar(
-            select(Project).where(Project.creation_idempotency_key == idempotency_key)
+    def convertible_policies(self, *, page: int, page_size: int) -> ConvertiblePolicyPage:
+        statement = self._convertible_statement()
+        total = self.db.scalar(
+            select(func.count()).select_from(statement.order_by(None).subquery())
+        ) or 0
+        rows = self.db.execute(
+            statement.order_by(Policy.updated_at.desc(), Policy.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        ).all()
+        return ConvertiblePolicyPage(
+            items=[
+                ConvertiblePolicyItem(
+                    id=policy.id,
+                    title=policy.title,
+                    primary_entity_decision_id=primary.id,
+                    primary_entity_seed_code=primary.entity_seed_code,
+                    primary_entity_legal_name=primary.entity_legal_name,
+                    deadline_on=policy.deadline_on,
+                    conversion_warnings=self._warnings(policy.deadline_on),
+                )
+                for policy, primary in rows
+            ],
+            page=page,
+            page_size=page_size,
+            total=total,
         )
-        if existing_key is not None:
-            if existing_key.creation_request_fingerprint == fingerprint:
-                return existing_key
-            raise IdempotencyKeyReused()
-        existing_project = self.db.scalar(
-            select(Project).where(Project.policy_id == policy_id)
+
+    def _project_id_statement(self, filters: ProjectFilters, *, actor: User):
+        statement = select(Project.id)
+        if filters.q:
+            pattern = f"%{filters.q}%"
+            policy_title_matches = (
+                select(Policy.id)
+                .where(Policy.id == Project.policy_id, Policy.title.like(pattern))
+                .exists()
+            )
+            statement = statement.where(
+                or_(Project.name.like(pattern), policy_title_matches)
+            )
+        if filters.primary_entity_seed_code:
+            statement = statement.where(
+                Project.primary_entity_seed_code == filters.primary_entity_seed_code
+            )
+        if filters.liaison_user_id:
+            statement = statement.where(Project.liaison_user_id == filters.liaison_user_id)
+        if filters.status:
+            statement = statement.where(Project.status == filters.status)
+        if filters.deadline_from:
+            statement = statement.where(Project.deadline_on >= filters.deadline_from)
+        if filters.deadline_to:
+            statement = statement.where(Project.deadline_on <= filters.deadline_to)
+        if filters.mine:
+            statement = statement.where(Project.liaison_user_id == actor.id)
+        return statement
+
+    def _list_item(self, project: Project, policy: Policy, *, actor: User) -> ProjectListItem:
+        return ProjectListItem(
+            id=project.id,
+            policy_id=project.policy_id,
+            name=project.name,
+            policy_title=policy.title,
+            primary_entity_seed_code=project.primary_entity_seed_code,
+            primary_entity_legal_name=project.primary_entity_legal_name,
+            applicant_owner=ProjectPerson(
+                id=project.applicant_owner_id,
+                display_name=project.applicant_owner_display_name,
+            ),
+            liaison=ProjectPerson(id=project.liaison_user_id, display_name=project.liaison_display_name),
+            status=project.status,
+            deadline_on=project.deadline_on,
+            updated_at=project.updated_at,
+            version=project.version,
+            capabilities=self._capabilities(project, actor),
         )
-        if existing_project is not None:
-            raise PolicyAlreadyConverted(project_id=existing_project.id)
-        raise PolicyAlreadyConverted()
+
+    @staticmethod
+    def _warnings(deadline_on: date | None) -> list[str]:
+        if deadline_on is None:
+            return ["deadline_unknown"]
+        if deadline_on < date.today():
+            return ["deadline_expired"]
+        return []
+
+    @staticmethod
+    def _capabilities(project: Project, actor: User) -> ProjectCapabilitiesResponse:
+        return ProjectCapabilitiesResponse(**capabilities_for(actor=actor, project=project).__dict__)
+
+    @staticmethod
+    def _convertible_statement():
+        no_project = select(Project.id).where(Project.policy_id == Policy.id).exists()
+        return (
+            select(Policy, PrimaryEntityDecision)
+            .join(
+                PrimaryEntityDecision,
+                PrimaryEntityDecision.current_policy_id == Policy.id,
+            )
+            .where(
+                Policy.conclusion_confirmed.is_(True),
+                Policy.current_conclusion == "recommend_apply",
+                ~no_project,
+            )
+        )
