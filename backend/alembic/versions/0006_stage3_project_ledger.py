@@ -92,8 +92,8 @@ def upgrade() -> None:
         sa.Column("submitted_on", sa.Date(), nullable=True),
         sa.Column("result_on", sa.Date(), nullable=True),
         sa.Column("progress_note", sa.Text(), nullable=True),
-        sa.Column("result_note", sa.Text(), nullable=True),
-        sa.Column("termination_note", sa.Text(), nullable=True),
+        sa.Column("result_note", sa.String(length=500), nullable=True),
+        sa.Column("termination_note", sa.String(length=2000), nullable=True),
         sa.Column("creation_idempotency_key", sa.String(length=128), nullable=False),
         sa.Column("creation_request_fingerprint", sa.String(length=64), nullable=False),
         sa.Column("version", sa.Integer(), nullable=False, server_default="1"),
@@ -104,10 +104,24 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
         sa.UniqueConstraint("policy_id", name="uq_projects_policy_id"),
         sa.UniqueConstraint(
             "creation_idempotency_key", name="uq_projects_creation_idempotency_key"
+        ),
+        sa.CheckConstraint(
+            "status NOT IN ('succeeded', 'rejected') OR result_on IS NOT NULL",
+            name="ck_projects_result_status_requires_result_on",
+        ),
+        sa.CheckConstraint(
+            "status != 'terminated' OR (termination_note IS NOT NULL "
+            "AND length(termination_note) > 0)",
+            name="ck_projects_terminated_requires_note",
         ),
     )
     op.create_index(
@@ -148,7 +162,7 @@ def upgrade() -> None:
         sa.Column("new_status", project_status_history_new_status_type, nullable=False),
         sa.Column("actor_id", sa.Integer(), sa.ForeignKey("users.id"), nullable=False),
         sa.Column("actor_display_name", sa.String(length=255), nullable=False),
-        sa.Column("reason", sa.Text(), nullable=True),
+        sa.Column("reason", sa.String(length=1000), nullable=True),
         sa.Column("related_date", sa.Date(), nullable=True),
         sa.Column("before_values", sa.JSON(), nullable=False),
         sa.Column("after_values", sa.JSON(), nullable=False),

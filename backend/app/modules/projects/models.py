@@ -3,7 +3,19 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import Date, DateTime, Enum, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    Date,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin
@@ -60,6 +72,15 @@ class Project(Base, TimestampMixin):
         UniqueConstraint(
             "creation_idempotency_key", name="uq_projects_creation_idempotency_key"
         ),
+        CheckConstraint(
+            "status NOT IN ('succeeded', 'rejected') OR result_on IS NOT NULL",
+            name="ck_projects_result_status_requires_result_on",
+        ),
+        CheckConstraint(
+            "status != 'terminated' OR (termination_note IS NOT NULL "
+            "AND length(termination_note) > 0)",
+            name="ck_projects_terminated_requires_note",
+        ),
         Index("ix_projects_status_updated_at_id", "status", "updated_at", "id"),
         Index("ix_projects_deadline_on_id", "deadline_on", "id"),
         Index(
@@ -95,8 +116,8 @@ class Project(Base, TimestampMixin):
     submitted_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     result_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     progress_note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    result_note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    termination_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    termination_note: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     creation_idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
     creation_request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
@@ -140,7 +161,7 @@ class ProjectStatusHistory(Base):
     )
     actor_id: Mapped[int] = mapped_column(ForeignKey(User.id), nullable=False)
     actor_display_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reason: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     related_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     before_values: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     after_values: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)

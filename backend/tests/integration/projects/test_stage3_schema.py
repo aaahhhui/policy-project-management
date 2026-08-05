@@ -5,7 +5,8 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import Inspector, create_engine, inspect
+from sqlalchemy import Connection, Inspector, create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import get_settings
@@ -27,6 +28,109 @@ def migrated_inspector(monkeypatch: pytest.MonkeyPatch) -> Iterator[Inspector]:
 
     engine.dispose()
     get_settings.cache_clear()
+
+
+@pytest.fixture
+def migrated_connection(monkeypatch: pytest.MonkeyPatch) -> Iterator[Connection]:
+    database_url = "sqlite+pysqlite://"
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    monkeypatch.setenv("JWT_SECRET", "test-secret-at-least-32-characters")
+    get_settings.cache_clear()
+
+    config = Config(str(Path(__file__).parents[3] / "alembic.ini"))
+    engine = create_engine(database_url, poolclass=StaticPool)
+    with engine.begin() as connection:
+        config.attributes["connection"] = connection
+        command.upgrade(config, "head")
+        yield connection
+
+    engine.dispose()
+    get_settings.cache_clear()
+
+
+def _insert_project(
+    connection: Connection,
+    *,
+    project_id: int,
+    status: str = "pending_application",
+    result_on: str | None = None,
+    result_note: str | None = None,
+    termination_note: str | None = None,
+    include_updated_at: bool = True,
+) -> None:
+    columns = """
+        id, policy_id, name, primary_entity_decision_id, primary_entity_seed_code,
+        primary_entity_legal_name, applicant_owner_id, applicant_owner_display_name,
+        liaison_user_id, liaison_display_name, status, result_on, result_note,
+        termination_note, creation_idempotency_key, creation_request_fingerprint,
+        version, created_by
+    """
+    values = """
+        :project_id, 1, 'Project', 1, 'ENTITY-1', 'Entity One', 1, 'Owner', 1,
+        'Liaison', :status, :result_on, :result_note, :termination_note,
+        :idempotency_key, 'fingerprint', 1, 1
+    """
+    if include_updated_at:
+        columns += ", updated_at"
+        values += ", '2026-08-05 00:00:00'"
+
+    connection.execute(
+        text(f"INSERT INTO projects ({columns}) VALUES ({values})"),
+        {
+            "project_id": project_id,
+            "status": status,
+            "result_on": result_on,
+            "result_note": result_note,
+            "termination_note": termination_note,
+            "idempotency_key": f"project-key-{project_id}",
+        },
+    )
+
+
+def test_project_insert_uses_timestamp_server_defaults(
+    migrated_connection: Connection,
+) -> None:
+    _insert_project(
+        migrated_connection,
+        project_id=1,
+        include_updated_at=False,
+    )
+
+    assert migrated_connection.scalar(
+        text("SELECT updated_at FROM projects WHERE id = 1")
+    ) is not None
+
+
+def test_project_statuses_require_their_persisted_dates_and_notes(
+    migrated_connection: Connection,
+) -> None:
+    with pytest.raises(IntegrityError):
+        _insert_project(migrated_connection, project_id=1, status="succeeded")
+
+    with pytest.raises(IntegrityError):
+        _insert_project(
+            migrated_connection,
+            project_id=2,
+            status="terminated",
+            termination_note="",
+        )
+
+
+def test_project_notes_and_history_reason_have_persisted_length_limits(
+    migrated_inspector: Inspector,
+) -> None:
+    project_column_lengths = {
+        column["name"]: getattr(column["type"], "length", None)
+        for column in migrated_inspector.get_columns("projects")
+    }
+    history_column_lengths = {
+        column["name"]: getattr(column["type"], "length", None)
+        for column in migrated_inspector.get_columns("project_status_history")
+    }
+
+    assert project_column_lengths["result_note"] == 500
+    assert project_column_lengths["termination_note"] == 2000
+    assert history_column_lengths["reason"] == 1000
 
 
 def test_stage3_tables_constraints_and_indexes_exist(
