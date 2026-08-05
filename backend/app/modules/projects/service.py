@@ -6,7 +6,7 @@ from datetime import UTC, date, datetime
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.modules.audit.service import AuditService
 from app.modules.auth.models import User
@@ -40,6 +40,7 @@ from app.modules.projects.schemas import (
     ProjectPolicySnapshot,
     ProjectStatusHistoryDetail,
     ProjectSummary,
+    ProjectUserOption,
 )
 
 
@@ -251,7 +252,7 @@ class ProjectQueryService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def summary(self, *, actor: User) -> ProjectSummary:
+    def summary(self, actor: User) -> ProjectSummary:
         del actor  # Summaries intentionally describe the global ledger for every reader.
         from app.modules.projects.models import PROJECT_STATUSES
 
@@ -298,7 +299,7 @@ class ProjectQueryService:
             total=total,
         )
 
-    def detail(self, project_id: int, *, actor: User) -> ProjectDetail:
+    def detail(self, project_id: int, actor: User) -> ProjectDetail:
         row = self.db.execute(
             select(Project, Policy)
             .join(Policy, Policy.id == Project.policy_id)
@@ -318,7 +319,7 @@ class ProjectQueryService:
             self.db.scalars(
                 select(ProjectStatusHistory)
                 .where(ProjectStatusHistory.project_id == project.id)
-                .order_by(ProjectStatusHistory.occurred_at, ProjectStatusHistory.id)
+                .order_by(ProjectStatusHistory.occurred_at.desc(), ProjectStatusHistory.id.desc())
             )
         )
         return ProjectDetail(
@@ -349,7 +350,7 @@ class ProjectQueryService:
                 )
                 for member in members
             ],
-            conversion_warnings=self._warnings(project.deadline_on),
+            conversion_warnings=self._project_warnings(project),
             policy=ProjectPolicySnapshot(
                 id=policy.id,
                 title=policy.title,
@@ -420,7 +421,7 @@ class ProjectQueryService:
                     primary_entity_seed_code=primary.entity_seed_code,
                     primary_entity_legal_name=primary.entity_legal_name,
                     deadline_on=policy.deadline_on,
-                    conversion_warnings=self._warnings(policy.deadline_on),
+                    conversion_warnings=self._preview_warnings(policy.deadline_on),
                 )
                 for policy, primary in rows
             ],
@@ -428,6 +429,21 @@ class ProjectQueryService:
             page_size=page_size,
             total=total,
         )
+
+    def project_user_options(self) -> list[ProjectUserOption]:
+        return [
+            ProjectUserOption(
+                id=user.id,
+                display_name=user.display_name,
+                role=min((role.code for role in user.roles), default=None),
+            )
+            for user in self.db.scalars(
+                select(User)
+                .options(selectinload(User.roles))
+                .where(User.is_active.is_(True))
+                .order_by(User.display_name, User.id)
+            )
+        ]
 
     def _project_id_statement(self, filters: ProjectFilters, *, actor: User):
         statement = select(Project.id)
@@ -478,10 +494,18 @@ class ProjectQueryService:
         )
 
     @staticmethod
-    def _warnings(deadline_on: date | None) -> list[str]:
+    def _preview_warnings(deadline_on: date | None) -> list[str]:
         if deadline_on is None:
             return ["deadline_unknown"]
         if deadline_on < date.today():
+            return ["deadline_expired"]
+        return []
+
+    @staticmethod
+    def _project_warnings(project: Project) -> list[str]:
+        if project.deadline_on is None:
+            return ["deadline_unknown"]
+        if project.deadline_on < project.created_at.date():
             return ["deadline_expired"]
         return []
 

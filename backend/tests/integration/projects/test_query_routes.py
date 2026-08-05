@@ -73,3 +73,20 @@ def test_project_query_routes_validate_page_controls_and_return_stable_page_shap
     assert invalid_page.status_code == 422
     assert empty.status_code == 200
     assert empty.json() == {"items": [], "page": 3, "page_size": 50, "total": 0}
+
+
+def test_project_query_routes_reject_invalid_filter_values_without_internal_errors(
+    client, seeded_owner, seeded_owner_password
+) -> None:
+    # Passing a value outside the filter contract must be a normal request validation failure.
+    _login(client, "owner", seeded_owner_password)
+
+    responses = [
+        client.get("/api/projects?status=bogus"),
+        client.get(f"/api/projects?q={'x' * 513}"),
+        client.get(f"/api/projects?entity_seed_code={'x' * 65}"),
+        client.get("/api/projects?liaison_user_id=0"),
+    ]
+
+    assert all(response.status_code == 422 for response in responses)
+    assert all("ValidationError" not in response.text for response in responses)

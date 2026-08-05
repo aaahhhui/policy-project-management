@@ -2,8 +2,7 @@ from datetime import date
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.modules.auth.dependencies import get_current_user
@@ -19,6 +18,7 @@ from app.modules.projects.schemas import (
     ProjectDetail,
     ProjectFilters,
     ProjectPage,
+    ProjectStatus,
     ProjectSummary,
     ProjectUserOption,
     ConvertiblePolicyPage,
@@ -71,11 +71,11 @@ def project_summary(actor: Owner, db: Session = Depends(get_db)) -> ProjectSumma
 @router.get("/api/projects", response_model=ProjectPage)
 def list_projects(
     actor: Owner,
-    q: str | None = None,
-    entity_seed_code: str | None = None,
-    primary_entity_seed_code: str | None = None,
+    q: str | None = Query(default=None, max_length=512),
+    entity_seed_code: str | None = Query(default=None, max_length=64),
+    primary_entity_seed_code: str | None = Query(default=None, max_length=64),
     liaison_user_id: int | None = Query(default=None, gt=0),
-    status_code: str | None = Query(default=None, alias="status"),
+    status_code: ProjectStatus | None = Query(default=None, alias="status"),
     deadline_from: date | None = None,
     deadline_to: date | None = None,
     mine: bool = False,
@@ -149,16 +149,4 @@ def convert_policy(
 @router.get("/api/users/project-options", response_model=list[ProjectUserOption])
 def project_user_options(actor: Owner, db: Session = Depends(get_db)) -> list[ProjectUserOption]:
     _require_applicant_owner(actor)
-    return [
-        ProjectUserOption(
-            id=user.id,
-            display_name=user.display_name,
-            role=min((role.code for role in user.roles), default=None),
-        )
-        for user in db.scalars(
-            select(User)
-            .options(selectinload(User.roles))
-            .where(User.is_active.is_(True))
-            .order_by(User.display_name, User.id)
-        )
-    ]
+    return ProjectQueryService(db).project_user_options()

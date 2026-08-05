@@ -4,8 +4,6 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import select
-
 from app.modules.projects.models import ProjectMember, ProjectStatusHistory
 from app.modules.projects.schemas import ProjectFilters
 from app.modules.projects.service import ProjectQueryService
@@ -113,23 +111,37 @@ def ledger(db):
             added_at=base,
         )
     )
-    db.add(
-        ProjectStatusHistory(
+    first_history = ProjectStatusHistory(
             project_id=projects["submitted"].id,
             action="created",
             previous_status=None,
-            new_status="submitted",
+            new_status="pending_application",
             actor_id=owner.id,
             actor_display_name=owner.display_name,
             reason=None,
             related_date=today,
             before_values={},
-            after_values={"status": "submitted"},
+            after_values={"status": "pending_application"},
             from_version=0,
             to_version=1,
             occurred_at=base,
         )
+    latest_history = ProjectStatusHistory(
+        project_id=projects["submitted"].id,
+        action="transitioned",
+        previous_status="pending_application",
+        new_status="submitted",
+        actor_id=liaison.id,
+        actor_display_name=liaison.display_name,
+        reason="Submitted",
+        related_date=today,
+        before_values={"status": "pending_application"},
+        after_values={"status": "submitted"},
+        from_version=1,
+        to_version=2,
+        occurred_at=base + timedelta(hours=1),
     )
+    db.add_all([first_history, latest_history])
     convertible, _ = create_confirmed_recommend_policy(db, owner=owner)
     convertible.title = "Still convertible"
     db.commit()
@@ -139,6 +151,7 @@ def ledger(db):
         "reader": reader,
         "projects": projects,
         "convertible": convertible,
+        "history_ids": (first_history.id, latest_history.id),
         "today": today,
     }
 
@@ -147,7 +160,7 @@ def test_summary_counts_all_statuses_and_current_convertible_policies(db, ledger
     # Removing the confirmed recommendation or adding a project must change its real-time count.
     query = ProjectQueryService(db)
 
-    summary = query.summary(actor=ledger["reader"])
+    summary = query.summary(ledger["reader"])
 
     assert summary.total == 7
     assert summary.by_status == {
@@ -160,7 +173,7 @@ def test_summary_counts_all_statuses_and_current_convertible_policies(db, ledger
     assert summary.convertible_policy_count == 1
     ledger["convertible"].conclusion_confirmed = False
     db.flush()
-    assert query.summary(actor=ledger["reader"]).convertible_policy_count == 0
+    assert query.summary(ledger["reader"]).convertible_policy_count == 0
 
 
 def test_list_composes_keyword_entity_liaison_status_deadline_and_mine_filters(db, ledger) -> None:
@@ -245,17 +258,51 @@ def test_filters_reject_unsupported_page_size() -> None:
         ProjectFilters(page=1, page_size=25)
 
 
-def test_detail_contains_policy_entity_people_history_capabilities_and_version(db, ledger) -> None:
+def test_detail_contains_policy_entity_people_newest_history_capabilities_and_version(db, ledger) -> None:
     # Omitting a joined detail section or using an unordered history would make the detail incomplete.
     project = ledger["projects"]["submitted"]
-    detail = ProjectQueryService(db).detail(project.id, actor=ledger["liaison"])
+    detail = ProjectQueryService(db).detail(project.id, ledger["liaison"])
 
     assert detail.policy.title == "Associated policy title"
     assert detail.entity.seed_code == "ENTITY-SUBMITTED"
     assert detail.applicant_owner.id == ledger["owner"].id
     assert detail.liaison.id == ledger["liaison"].id
-    assert [entry.id for entry in detail.status_history] == [
-        db.scalar(select(ProjectStatusHistory.id).where(ProjectStatusHistory.project_id == project.id))
-    ]
+    assert [entry.id for entry in detail.status_history] == list(reversed(ledger["history_ids"]))
     assert detail.capabilities.can_update_progress is True
     assert detail.version == 1
+
+
+def test_detail_warns_only_when_deadline_was_expired_on_project_creation(db, ledger) -> None:
+    # Comparing with the current date would incorrectly add a warning after a valid deadline passes.
+    project = ledger["projects"]["submitted"]
+    project.created_at = datetime.combine(
+        ledger["today"] - timedelta(days=2), datetime.min.time(), tzinfo=UTC
+    )
+    project.deadline_on = ledger["today"] - timedelta(days=1)
+    db.flush()
+
+    detail = ProjectQueryService(db).detail(project.id, ledger["liaison"])
+
+    assert detail.conversion_warnings == []
+
+
+def test_convertible_preview_still_warns_against_the_current_date(db, ledger) -> None:
+    # Unlike a created project, a conversion preview has no creation timestamp yet.
+    ledger["convertible"].deadline_on = ledger["today"] - timedelta(days=1)
+    db.flush()
+
+    page = ProjectQueryService(db).convertible_policies(page=1, page_size=10)
+
+    assert page.items[0].conversion_warnings == ["deadline_expired"]
+
+
+def test_project_user_options_service_returns_active_users_with_roles(db, ledger) -> None:
+    # Returning inactive users or omitting their role snapshots would make project assignment unsafe.
+    options = ProjectQueryService(db).project_user_options()
+
+    assert [(option.display_name, option.role) for option in options] == [
+        ("Alternate", None),
+        ("Liaison", None),
+        ("Owner", "applicant_owner"),
+        ("Reader", None),
+    ]
