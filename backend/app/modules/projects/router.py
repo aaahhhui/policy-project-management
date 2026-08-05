@@ -84,7 +84,11 @@ def project_user_options(actor: Owner, db: Session = Depends(get_db)) -> list[Pr
             detail={"code": "project_write_forbidden"},
         )
     return [
-        ProjectUserOption(id=user.id, display_name=user.display_name)
+        ProjectUserOption(
+            id=user.id,
+            display_name=user.display_name,
+            role=min((role.code for role in user.roles), default=None),
+        )
         for user in db.scalars(
             select(User).where(User.is_active.is_(True)).order_by(User.display_name, User.id)
         )

@@ -52,7 +52,12 @@ def test_conversion_route_rejects_invalid_idempotency_keys_and_unexpected_body_f
     _login(client, seeded_owner_password)
     payload = _conversion_payload(liaison.id)
 
-    for headers in ({}, {"Idempotency-Key": "   "}, {"Idempotency-Key": "x" * 129}):
+    for headers in (
+        {},
+        {"Idempotency-Key": "   "},
+        {"Idempotency-Key": " abcdefg "},
+        {"Idempotency-Key": "x" * 129},
+    ):
         response = client.post(
             f"/api/policies/{policy.id}/project", headers=headers, json=payload
         )
@@ -65,6 +70,37 @@ def test_conversion_route_rejects_invalid_idempotency_keys_and_unexpected_body_f
     )
 
     assert response.status_code == 422
+
+
+def test_conversion_route_normalizes_idempotency_keys_at_exact_length_boundaries(
+    client, db, seeded_owner, seeded_owner_password
+) -> None:
+    short_policy, liaison = _eligible_policy(db, seeded_owner)
+    long_policy, _ = create_confirmed_recommend_policy(db, owner=seeded_owner)
+    db.commit()
+    _login(client, seeded_owner_password)
+    payload = _conversion_payload(liaison.id)
+
+    padded_short = client.post(
+        f"/api/policies/{short_policy.id}/project",
+        headers={"Idempotency-Key": "  12345678  "},
+        json=payload,
+    )
+    assert padded_short.status_code == 201
+    retry = client.post(
+        f"/api/policies/{short_policy.id}/project",
+        headers={"Idempotency-Key": "12345678"},
+        json=payload,
+    )
+    assert retry.status_code == 201
+    assert retry.json()["id"] == padded_short.json()["id"]
+
+    exact_long = client.post(
+        f"/api/policies/{long_policy.id}/project",
+        headers={"Idempotency-Key": "x" * 128},
+        json=payload,
+    )
+    assert exact_long.status_code == 201
 
 
 def test_conversion_route_maps_domain_errors_without_exposing_exception_text(

@@ -129,6 +129,7 @@ class ProjectUserOption(BaseModel):
 
     id: int
     display_name: str
+    role: str | None
 
 
 class ProjectDetail(BaseModel):
