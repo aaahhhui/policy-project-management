@@ -126,6 +126,7 @@ describe("PolicyDetailView evaluation", () => {
       ],
     }]);
     vi.mocked(getPrimaryEntityHistory).mockResolvedValue([{
+      id: 1,
       entity_seed_code: "ENTITY-SHENZHEN",
       entity_legal_name: "深圳适创腾扬科技有限公司",
       is_current: true,
@@ -156,11 +157,13 @@ describe("PolicyDetailView evaluation", () => {
     vi.mocked(getPrimaryEntityHistory)
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{
+        id: 2,
         entity_seed_code: "ENTITY-BEIJING",
         entity_legal_name: "北京适创科技有限公司",
         is_current: true,
       }]);
     vi.mocked(selectPrimaryEntity).mockResolvedValue({
+      id: 2,
       entity_seed_code: "ENTITY-BEIJING",
       entity_legal_name: "北京适创科技有限公司",
       is_current: true,
@@ -257,6 +260,7 @@ describe("PolicyDetailView evaluation", () => {
       ],
     }]);
     vi.mocked(getPrimaryEntityHistory).mockResolvedValue([{
+      id: 3,
       entity_seed_code: "ENTITY-SUZHOU",
       entity_legal_name: "苏州数算软云科技有限公司",
       is_current: true,
@@ -294,6 +298,7 @@ describe("PolicyDetailView evaluation", () => {
     expect(wrapper.find("form.confirmation-form").exists()).toBe(false);
 
     resolvePrimaryHistory([{
+      id: 2,
       entity_seed_code: "ENTITY-BEIJING",
       entity_legal_name: "北京适创科技有限公司",
       is_current: true,

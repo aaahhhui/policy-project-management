@@ -60,6 +60,7 @@ export interface EvaluationConfirmationInput {
 }
 
 export interface PrimaryEntityDecision {
+  id: number;
   entity_seed_code: string;
   entity_legal_name: string;
   reason?: string | null;

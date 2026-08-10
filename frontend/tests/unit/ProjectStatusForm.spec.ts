@@ -34,4 +34,30 @@ describe("ProjectStatusForm", () => {
     expect(transitionProject).not.toHaveBeenCalled();
     expect(wrapper.text()).toContain("终止备注");
   });
+
+  it("sends only status-compatible fields for submitted and terminated transitions", async () => {
+    vi.mocked(transitionProject).mockResolvedValue(project);
+    const submittedProject = { ...project, status: "pending_application" as const, submitted_on: null };
+    const submitted = mount(ProjectStatusForm, { props: { project: submittedProject } });
+    await submitted.get<HTMLInputElement>("[aria-label='提交日期']").setValue("2026-08-01");
+    await submitted.get("form").trigger("submit");
+    expect(transitionProject).toHaveBeenLastCalledWith(19, { expected_version: 3, target_status: "submitted", submitted_on: "2026-08-01" });
+
+    const terminated = mount(ProjectStatusForm, { props: { project } });
+    await terminated.get<HTMLSelectElement>("[aria-label='目标状态']").setValue("terminated");
+    await terminated.get<HTMLTextAreaElement>("[aria-label='终止备注']").setValue("主动终止");
+    await terminated.get("form").trigger("submit");
+    expect(transitionProject).toHaveBeenLastCalledWith(19, { expected_version: 3, target_status: "terminated", termination_note: "主动终止" });
+  });
+
+  it("offers a reload action on a transition version conflict", async () => {
+    vi.mocked(transitionProject).mockRejectedValue({ response: { data: { detail: { code: "project_version_conflict" } } } });
+    const wrapper = mount(ProjectStatusForm, { props: { project } });
+    await wrapper.get<HTMLSelectElement>("[aria-label='目标状态']").setValue("terminated");
+    await wrapper.get<HTMLTextAreaElement>("[aria-label='终止备注']").setValue("主动终止");
+    await wrapper.get("form").trigger("submit");
+    expect(wrapper.find("[data-reload-project]").exists()).toBe(true);
+    await wrapper.get("[data-reload-project]").trigger("click");
+    expect(wrapper.emitted("reload")).toBeTruthy();
+  });
 });

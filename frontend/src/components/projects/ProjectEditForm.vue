@@ -1,32 +1,36 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 
 import { businessErrorMessage } from "../../api/errors";
-import { updateProject, type ProjectDetail, type ProjectUpdateInput } from "../../api/projects";
+import { getProjectUserOptions, updateProject, type ProjectDetail, type ProjectUpdateInput, type ProjectUserOption } from "../../api/projects";
 
 const props = defineProps<{ project: ProjectDetail }>();
 const emit = defineEmits<{ updated: [project: ProjectDetail]; reload: [] }>();
 const saving = ref(false);
 const error = ref("");
 const conflict = ref(false);
-const form = reactive({ name: "", deadline_on: "", liaison_user_id: "", member_user_ids: "", submitted_on: "", result_on: "", progress_note: "", result_note: "", termination_note: "" });
+const users = ref<ProjectUserOption[]>([]);
+const form = reactive({ name: "", deadline_on: "", liaison_user_id: "", member_user_ids: [] as string[], submitted_on: "", result_on: "", progress_note: "", result_note: "", termination_note: "" });
 const liaisonFields = ["submitted_on", "result_on", "progress_note", "result_note", "termination_note"] as const;
 const ownerFields = ["name", "deadline_on", "liaison_user_id", "member_user_ids", ...liaisonFields] as const;
 const isOwner = computed(() => props.project.capabilities.can_edit_project);
 
 function syncForm(project: ProjectDetail): void {
   form.name = project.name; form.deadline_on = project.deadline_on ?? ""; form.liaison_user_id = String(project.liaison_user_id);
-  form.member_user_ids = project.members.map((member) => member.user_id).join(","); form.submitted_on = project.submitted_on ?? "";
+  form.member_user_ids = project.members.map((member) => String(member.user_id)); form.submitted_on = project.submitted_on ?? "";
   form.result_on = project.result_on ?? ""; form.progress_note = project.progress_note ?? ""; form.result_note = project.result_note ?? ""; form.termination_note = project.termination_note ?? "";
 }
 function normalize(value: string): string | null { return value.trim() || null; }
-function memberIds(): number[] { return [...new Set(form.member_user_ids.split(",").map((value) => Number(value.trim())).filter((value) => Number.isInteger(value) && value > 0))]; }
+function memberIds(): number[] { return [...new Set(form.member_user_ids.map(Number).filter((value) => Number.isInteger(value) && value > 0))]; }
+function userLabel(user: ProjectUserOption): string { return user.role ? `${user.display_name}（${user.role}）` : user.display_name; }
 function isVersionConflict(caught: unknown): boolean {
   const detail = (caught as { response?: { data?: { detail?: { code?: string } } } })?.response?.data?.detail;
   return detail?.code === "project_version_conflict";
 }
 async function submit(): Promise<void> {
   if (saving.value) return;
+  if (isOwner.value && !form.name.trim()) { error.value = "项目名称不能为空。"; return; }
+  if (isOwner.value && (!Number.isInteger(Number(form.liaison_user_id)) || Number(form.liaison_user_id) < 1)) { error.value = "请选择项目对接人。"; return; }
   saving.value = true; error.value = ""; conflict.value = false;
   const source = isOwner.value ? ownerFields : liaisonFields;
   const values = {
@@ -40,14 +44,19 @@ async function submit(): Promise<void> {
 }
 
 watch(() => props.project, syncForm, { immediate: true, deep: true });
+onMounted(async () => {
+  if (!isOwner.value) return;
+  try { users.value = await getProjectUserOptions(); }
+  catch (caught) { error.value = businessErrorMessage(caught, "无法加载可用项目用户，请稍后重试。"); }
+});
 </script>
 
 <template>
   <form class="project-edit-form" @submit.prevent="submit">
-    <label v-if="isOwner">项目名称<input v-model="form.name" aria-label="项目名称" maxlength="255" /></label>
+    <label v-if="isOwner">项目名称<input v-model="form.name" aria-label="项目名称" maxlength="300" required /></label>
     <label v-if="isOwner">截止日期<input v-model="form.deadline_on" type="date" aria-label="项目截止日期" /></label>
-    <label v-if="isOwner">项目对接人<input v-model="form.liaison_user_id" type="number" min="1" aria-label="项目对接人" /></label>
-    <label v-if="isOwner">成员 ID（以逗号分隔）<input v-model="form.member_user_ids" aria-label="项目成员" /></label>
+    <label v-if="isOwner">项目对接人<select v-model="form.liaison_user_id" aria-label="项目对接人" required><option value="">请选择</option><option v-for="user in users" :key="user.id" :value="String(user.id)">{{ userLabel(user) }}</option></select></label>
+    <label v-if="isOwner">项目成员<select v-model="form.member_user_ids" aria-label="项目成员" multiple><option v-for="user in users" :key="user.id" :value="String(user.id)">{{ userLabel(user) }}</option></select></label>
     <label>提交日期<input v-model="form.submitted_on" type="date" aria-label="提交日期" /></label>
     <label>结果日期<input v-model="form.result_on" type="date" aria-label="结果日期" /></label>
     <label>进展备注<textarea v-model="form.progress_note" aria-label="进展备注" maxlength="2000" /></label>
@@ -59,5 +68,5 @@ watch(() => props.project, syncForm, { immediate: true, deep: true });
 </template>
 
 <style scoped>
-.project-edit-form{display:grid;gap:.65rem}.project-edit-form label{display:grid;gap:.28rem;font-size:.86rem;font-weight:700}.project-edit-form input,.project-edit-form textarea{box-sizing:border-box;width:100%;min-height:2.35rem;padding:.45rem .55rem;border:1px solid #b8c7d8;font:inherit}.project-edit-form textarea{min-height:4.4rem;resize:vertical}.project-edit-form button{justify-self:start;min-height:2.35rem;padding:.42rem .8rem;color:#fff;border:1px solid #113a70;background:#113a70;font:inherit;font-weight:700}.error{margin:0;padding:.7rem;color:#9b1c1c;background:#fff1f0}.error button{margin-left:.5rem;color:#8a1c1c;border-color:#d69a98;background:#fff}button:disabled{opacity:.6}
+.project-edit-form{display:grid;gap:.65rem}.project-edit-form label{display:grid;gap:.28rem;font-size:.86rem;font-weight:700}.project-edit-form input,.project-edit-form select,.project-edit-form textarea{box-sizing:border-box;width:100%;min-height:2.35rem;padding:.45rem .55rem;border:1px solid #b8c7d8;font:inherit}.project-edit-form select[multiple]{min-height:6rem}.project-edit-form textarea{min-height:4.4rem;resize:vertical}.project-edit-form button{justify-self:start;min-height:2.35rem;padding:.42rem .8rem;color:#fff;border:1px solid #113a70;background:#113a70;font:inherit;font-weight:700}.error{margin:0;padding:.7rem;color:#9b1c1c;background:#fff1f0}.error button{margin-left:.5rem;color:#8a1c1c;border-color:#d69a98;background:#fff}button:disabled{opacity:.6}
 </style>

@@ -24,6 +24,7 @@ const project: ProjectDetail = {
 describe("ProjectDetailView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    route.params.id = "19";
     vi.mocked(getProject).mockResolvedValue(project);
     Object.defineProperty(window, "matchMedia", { configurable: true, value: vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) });
   });
@@ -33,12 +34,25 @@ describe("ProjectDetailView", () => {
     await vi.dynamicImportSettled();
     const text = wrapper.text();
 
-    expect(text.indexOf("制造业数字化改造项目")).toBeLessThan(text.indexOf("示例企业"));
-    expect(text.indexOf("示例企业")).toBeLessThan(text.indexOf("制造业数字化改造通知"));
+    expect(text.indexOf("制造业数字化改造项目")).toBeLessThan(text.indexOf("制造业数字化改造通知"));
+    expect(text.indexOf("制造业数字化改造通知")).toBeLessThan(text.indexOf("示例企业"));
     expect(wrapper.find("a[href='/policies/7']").exists()).toBe(true);
     expect(text).toContain("建议申报");
     expect(text).toContain("——");
     expect(wrapper.find("[data-project-mutations]").exists()).toBe(false);
+  });
+
+  it("uses backend conclusion codes and reloads when the route project ID changes", async () => {
+    const nextProject = { ...project, id: 20, policy: { ...project.policy, conclusion: "not_recommended" }, capabilities: { ...project.capabilities } };
+    vi.mocked(getProject).mockImplementation(async (id) => id === 20 ? nextProject : { ...project, policy: { ...project.policy, conclusion: "uncertain" } });
+    const wrapper = mount(ProjectDetailView, { global: { stubs: { RouterLink: { template: "<a><slot /></a>" } } } });
+    await vi.dynamicImportSettled();
+    expect(wrapper.text()).toContain("无法判断");
+    route.params.id = "20";
+    await nextTick();
+    await vi.dynamicImportSettled();
+    expect(getProject).toHaveBeenLastCalledWith(20);
+    expect(wrapper.text()).toContain("暂不建议申报");
   });
 
   it("hides mutation controls on mobile without hiding project content", async () => {

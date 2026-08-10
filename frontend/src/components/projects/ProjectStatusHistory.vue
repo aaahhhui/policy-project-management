@@ -6,7 +6,7 @@ import type { ProjectStatusHistoryDetail } from "../../api/projects";
 const props = defineProps<{ entries: ProjectStatusHistoryDetail[] }>();
 
 const actionLabels: Record<string, string> = {
-  create: "创建", update: "更新", transition: "状态流转", correction: "更正", primary_entity_correction: "主申报企业更正",
+  created: "已创建", transitioned: "已流转", corrected: "已更正",
 };
 const entries = computed(() => [...props.entries].sort((left, right) => {
   const occurred = right.occurred_at.localeCompare(left.occurred_at);
@@ -17,6 +17,7 @@ function display(value: unknown): string {
   if (value === null || value === undefined || value === "") return "——";
   return typeof value === "object" ? JSON.stringify(value) : String(value);
 }
+function changes(values: Record<string, unknown>): string { return Object.entries(values).map(([key, value]) => `${key}：${display(value)}`).join("；") || "——"; }
 </script>
 
 <template>
@@ -27,8 +28,8 @@ function display(value: unknown): string {
       <li v-for="entry in entries" :key="entry.id">
         <header><strong>{{ entry.actor.display_name }}</strong><span>{{ actionLabels[entry.action] ?? entry.action }}</span><time :datetime="entry.occurred_at">{{ entry.occurred_at }}</time></header>
         <dl>
-          <div><dt>变更前</dt><dd>{{ display(entry.before_values) }}</dd></div>
-          <div><dt>变更后</dt><dd>{{ display(entry.after_values) }}</dd></div>
+          <div><dt>变更前</dt><dd>{{ changes(entry.before_values) }}</dd></div>
+          <div><dt>变更后</dt><dd>{{ changes(entry.after_values) }}</dd></div>
           <div><dt>关联日期</dt><dd>{{ display(entry.related_date) }}</dd></div>
           <div v-if="entry.reason"><dt>原因</dt><dd>{{ entry.reason }}</dd></div>
         </dl>
