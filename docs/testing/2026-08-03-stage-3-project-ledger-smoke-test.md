@@ -87,4 +87,29 @@ The vertical fixture exercised one creation, two forward status transitions, one
 
 ## Non-blocking warnings and remaining gates
 
-Vite continues to emit only the known third-party PURE-annotation and main-chunk-over-500-kB warnings. They do not fail this build. Before Stage 3 can be marked release-ready, rerun the prescribed isolated MySQL 8.4 Compose health/migration sequence, the opt-in MySQL concurrency contract, and the container-log security scans in a Docker-capable environment.
+Vite continues to emit only the known third-party PURE-annotation and main-chunk-over-500-kB warnings. They do not fail this build.
+
+## 2026-08-10 Docker and UI acceptance addendum
+
+This addendum supersedes the earlier environment-blocked decision above. Docker Desktop was available at a per-user installation path even though the current shell `PATH` did not contain `docker`; verification used that executable directly and an isolated Compose project, without modifying the existing Stage 1/2 environments.
+
+| Gate | Result | Evidence |
+| --- | --- | --- |
+| Docker Compose / MySQL 8.4 | PASS | `stage3-ledger-verify` ran MySQL 8.4.11 plus api, web, collector, evaluator, and scheduler; all services reached healthy state and `/api/health` returned 200 `status=ok`. |
+| Fresh migrations | PASS | `alembic upgrade head` applied `0001` through `0007` in the Compose API container. |
+| MySQL downgrade/upgrade | PASS | `0007 -> 0005_decision_timestamps -> 0007` completed, followed by a healthy API check. |
+| Opt-in MySQL concurrency | PASS | The isolated two-session project-conversion contract ran against MySQL with `RUN_STAGE3_MYSQL_CONCURRENCY=1`: `1 passed in 0.82s`. The production image intentionally excludes tests, so the test used a disposable source bind mount in a one-off API container. |
+| Container log security scan | PASS | Count-only scans for private-key headers, `Authorization` credentials, OpenAI-style keys, and `DEEPSEEK_API_KEY` assignments all returned zero matches. |
+
+Desktop permission smoke used isolated MySQL fixtures and disposable local accounts; credentials are intentionally omitted.
+
+| Required scenario | Result | Evidence |
+| --- | --- | --- |
+| Owner navigation and conversion | PASS | Owner saw the ledger summary and one convertible-policy count, no legend/prompt, opened the expired-deadline warning, created the project, and landed on its detail page. |
+| Owner maintenance and primary correction | PASS | Owner changed the project name and liaison, replaced the current primary entity, and saw readable audit records including old/new entity values and correction reason. |
+| Liaison field boundary and workflow | PASS | The assigned liaison updated progress, transitioned `pending_application -> submitted -> succeeded`, and saw change history plus audit. A separate real desktop-width interaction corrected `succeeded -> submitted`; its `更正项目状态` audit was visible. |
+| Member, reader, and unrelated access | PASS | Reader, member, and unrelated accounts could read project facts/history/audit; none rendered maintenance, transition, or correction controls. The existing authenticated HTTP contract additionally verifies direct denied writes and audit recording. |
+| Retry uniqueness | PASS | The live MySQL concurrency contract verifies concurrent conversion yields exactly one project and stable loser context; the owner browser creation path was also exercised. |
+| Mobile reading and mutation hiding | PASS | A 390x844 Chromium session displayed project facts, history, and audit while hiding maintenance, transition, and correction controls for an unrelated user. The rendered screenshot was manually inspected. |
+
+**Release gate: PASS.** This record now has Docker/MySQL health, migration, concurrency, log-scan, desktop permission, and mobile responsive evidence in addition to the previously recorded automated suites.

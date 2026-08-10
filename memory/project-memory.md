@@ -398,3 +398,11 @@
 - 必需的桌面权限冒烟场景 1–7 均为 **NOT RUN**；既有局部页面观察和 API 自动化不得替代桌面冒烟。仅移动端只读与已转项目生命周期保留为 SQLite fallback 观察结果。
 - Stage 3 发布验收仍受阻：需在具备 Docker 的环境补跑 MySQL 8.4 健康检查、迁移往返、可选启用的双会话并发契约和容器日志密钥扫描。SQLite 证据不能替代这些门禁。
 - 明确延后到单独评审范围：企业微信通知（`CONV-06`、`PROJ-11`、`PROJ-12`）、企业档案编辑、政策来源扩展、备份恢复演练和正式生产迁移。
+
+## 26. 2026-08-10 Stage 3 Docker 与人工验收收口
+
+- Stage 3 分支 `codex/stage3-policy-project-ledger` 已完成 Docker/MySQL 8.4 验收：隔离 Compose 项目 `stage3-ledger-verify` 的 MySQL、api、web、collector、evaluator、scheduler 均达到健康状态，`/api/health` 返回 200；在容器内完成 `0001 -> 0007` fresh upgrade，以及 `0007 -> 0005 -> 0007` 往返迁移。
+- MySQL 并发转换契约以 opt-in 方式在一次性 API 容器中运行（生产镜像按设计不复制 `tests/`，因此仅对该测试挂载工作树源码），结果 `1 passed in 0.82s`；容器日志的私钥、Authorization、OpenAI 风格 key、DeepSeek key 模式计数均为 0。
+- 桌面权限人工冒烟已覆盖：负责人从已确认政策创建项目、过期截止日提示、项目详情跳转、负责人编辑和对接人改派、主申报企业更正及审计；对接人进度更新、状态前进流转与 `succeeded -> submitted` 状态更正审计；member、reader、unrelated 只读访问且不展示写入控件。并发唯一性由同一 MySQL 的双会话契约证明。
+- 移动端真实 Chromium 视口 `390x844` 已验收：项目事实、变更历史和审计可读，维护、状态流转、状态更正控件均隐藏。最终完整证据见 `docs/testing/2026-08-03-stage-3-project-ledger-smoke-test.md`。
+- 本阶段范围仍严格排除企业微信通知、企业档案编辑、新来源/五来源扩展、备份恢复和正式生产迁移；这些不是本次验收或合并条件。
