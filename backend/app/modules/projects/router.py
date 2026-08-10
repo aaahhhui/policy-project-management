@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.modules.audit.service import AuditService
 from app.modules.auth.dependencies import get_current_user
 from app.modules.auth.models import User
 from app.modules.projects.errors import (
@@ -63,6 +64,21 @@ def _require_applicant_owner(actor: User) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"code": "project_write_forbidden"},
         )
+
+
+def _commit_denied_write_audit(
+    db: Session, *, actor_id: int, project_id: int, attempted_action: str
+) -> None:
+    db.rollback()
+    with Session(bind=db.get_bind()) as audit_db:
+        AuditService(audit_db).record(
+            "project_write_denied",
+            actor_id,
+            "project",
+            project_id,
+            changes={"attempted_action": attempted_action, "code": "project_write_forbidden"},
+        )
+        audit_db.commit()
 
 
 @router.get("/api/projects/summary", response_model=ProjectSummary)
@@ -164,7 +180,12 @@ def update_project(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found") from error
     except ProjectError as error:
         if error.code == "project_write_forbidden":
-            db.commit()
+            _commit_denied_write_audit(
+                db,
+                actor_id=actor.id,
+                project_id=project_id,
+                attempted_action="update_project",
+            )
         else:
             db.rollback()
         raise _project_error_response(error) from None
@@ -189,7 +210,12 @@ def correct_primary_entity(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found") from error
     except ProjectError as error:
         if error.code == "project_write_forbidden":
-            db.commit()
+            _commit_denied_write_audit(
+                db,
+                actor_id=actor.id,
+                project_id=project_id,
+                attempted_action="correct_primary_entity",
+            )
         else:
             db.rollback()
         raise _project_error_response(error) from None

@@ -256,14 +256,11 @@ class ProjectService:
     ) -> ProjectDetail:
         changes = payload.model_dump(exclude_unset=True)
         expected_version = int(changes.pop("expected_version"))
-        project = self._locked_project(project_id)
-        if project.version != expected_version:
-            raise ProjectVersionConflict(current_version=project.version)
-        try:
+        with self.db.no_autoflush:
+            project = self._locked_project(project_id)
+            if project.version != expected_version:
+                raise ProjectVersionConflict(current_version=project.version)
             assert_update_fields_allowed(project=project, actor=actor, fields=set(changes))
-        except ProjectWriteForbidden:
-            self._record_write_denied(project=project, actor=actor, attempted_action="update_project")
-            raise
 
         self._validate_update(project=project, changes=changes)
         before = self._audit_values(project, set(changes))
@@ -301,14 +298,12 @@ class ProjectService:
         payload: ProjectPrimaryEntityCorrectionInput,
         actor: User,
     ) -> ProjectDetail:
-        project = self._locked_project(project_id)
-        if project.version != payload.expected_version:
-            raise ProjectVersionConflict(current_version=project.version)
-        if not capabilities_for(actor=actor, project=project).can_correct_primary_entity:
-            self._record_write_denied(
-                project=project, actor=actor, attempted_action="correct_primary_entity"
-            )
-            raise ProjectWriteForbidden()
+        with self.db.no_autoflush:
+            project = self._locked_project(project_id)
+            if project.version != payload.expected_version:
+                raise ProjectVersionConflict(current_version=project.version)
+            if not capabilities_for(actor=actor, project=project).can_correct_primary_entity:
+                raise ProjectWriteForbidden()
 
         policy = self.db.scalar(select(Policy).where(Policy.id == project.policy_id).with_for_update())
         current = self.db.scalar(
@@ -446,18 +441,6 @@ class ProjectService:
                 project.id,
                 changes={"before": changed_before, "after": {field: after[field] for field in changed_before}},
             )
-
-    def _record_write_denied(
-        self, *, project: Project, actor: User, attempted_action: str
-    ) -> None:
-        AuditService(self.db).record(
-            "project_write_denied",
-            actor.id,
-            "project",
-            project.id,
-            changes={"attempted_action": attempted_action, "code": "project_write_forbidden"},
-        )
-
 
 class ProjectQueryService:
     def __init__(self, db: Session) -> None:

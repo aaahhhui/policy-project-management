@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from app.modules.audit.models import AuditEvent
 from app.modules.projects.errors import (
     ProjectFieldValidationFailed,
+    ProjectLiaisonRequired,
     ProjectUserInactive,
     ProjectVersionConflict,
     ProjectWriteForbidden,
@@ -30,11 +31,15 @@ def _project(db, *, status: str = "pending_application"):
         primary=primary,
         owner=owner,
         liaison=liaison,
-        status="pending_application" if status in {"succeeded", "rejected"} else status,
+        status="pending_application" if status in {"succeeded", "rejected", "terminated"} else status,
     )
     if status in {"succeeded", "rejected"}:
         project.status = status
         project.result_on = date.today()
+        db.flush()
+    if status == "terminated":
+        project.status = status
+        project.termination_note = "Original termination note"
         db.flush()
     return owner, liaison, policy, project
 
@@ -85,6 +90,39 @@ def test_liaison_mixed_allowed_and_forbidden_fields_is_wholly_rejected(db) -> No
     assert project.version == 1
 
 
+def test_current_liaison_updates_only_the_allowed_maintenance_subset(db) -> None:
+    _owner, liaison, _policy, project = _project(db, status="succeeded")
+
+    detail = ProjectService(db).update_project(
+        project.id,
+        ProjectUpdateInput(
+            expected_version=1,
+            submitted_on=date.today() - timedelta(days=1),
+            result_on=date.today(),
+            progress_note="Liaison progress",
+            result_note="Liaison result",
+        ),
+        liaison,
+    )
+
+    assert detail.version == 2
+    assert detail.progress_note == "Liaison progress"
+    assert detail.result_note == "Liaison result"
+
+
+def test_owner_updates_termination_note_only_for_terminated_project(db) -> None:
+    owner, _liaison, _policy, project = _project(db, status="terminated")
+
+    detail = ProjectService(db).update_project(
+        project.id,
+        ProjectUpdateInput(expected_version=1, termination_note="Updated termination note"),
+        owner,
+    )
+
+    assert detail.termination_note == "Updated termination note"
+    assert detail.version == 2
+
+
 @pytest.mark.parametrize(
     ("status", "payload"),
     [
@@ -113,6 +151,21 @@ def test_update_rejects_inactive_liaison_or_member(db) -> None:
             ProjectUpdateInput(expected_version=1, liaison_user_id=inactive.id),
             owner,
         )
+    with pytest.raises(ProjectUserInactive):
+        ProjectService(db).update_project(
+            project.id,
+            ProjectUpdateInput(expected_version=1, member_user_ids=[inactive.id]),
+            owner,
+        )
+
+
+def test_explicit_null_liaison_is_rejected_without_mutation(db) -> None:
+    owner, _liaison, _policy, project = _project(db)
+    with pytest.raises(ProjectLiaisonRequired):
+        ProjectService(db).update_project(
+            project.id, ProjectUpdateInput(expected_version=1, liaison_user_id=None), owner
+        )
+    assert project.version == 1
 
 
 def test_stale_update_has_no_partial_mutation_history_or_success_audit(db) -> None:
