@@ -31,6 +31,7 @@ from app.modules.policies.schemas import (
 )
 from app.modules.policies.normalize import content_hash, normalize_text, normalize_url
 from app.modules.sources.models import PolicySource, SourceChannel
+from app.modules.projects.models import Project
 
 
 class AttachmentDownloader(Protocol):
@@ -110,6 +111,13 @@ class PolicyQueryService:
         sources: dict[int, list[str]] = {policy_id: [] for policy_id in ids}
         for policy_id, source_name in source_rows:
             sources[policy_id].append(source_name)
+        project_rows = self.session.execute(
+            select(Project.policy_id, Project.id, Project.name).where(Project.policy_id.in_(ids))
+        ).all()
+        projects = {
+            policy_id: (project_id, project_name)
+            for policy_id, project_id, project_name in project_rows
+        }
         items = [
             PolicyListItem(
                 id=policies[policy_id].id,
@@ -121,6 +129,9 @@ class PolicyQueryService:
                 conclusion_confirmed=policies[policy_id].conclusion_confirmed,
                 current_conclusion_source=policies[policy_id].current_conclusion_source,
                 conclusion_confirmed_at=policies[policy_id].conclusion_confirmed_at,
+                converted_to_project=policy_id in projects,
+                project_id=projects.get(policy_id, (None, None))[0],
+                project_name=projects.get(policy_id, (None, None))[1],
                 sources=sources[policy_id],
             )
             for policy_id in ids
@@ -156,6 +167,9 @@ class PolicyQueryService:
                 .order_by(PolicyAttachment.id)
             )
         )
+        project = self.session.scalar(
+            select(Project).where(Project.policy_id == policy_id)
+        )
         return PolicyDetail(
             id=policy.id,
             title=policy.title,
@@ -166,6 +180,9 @@ class PolicyQueryService:
             conclusion_confirmed=policy.conclusion_confirmed,
             current_conclusion_source=policy.current_conclusion_source,
             conclusion_confirmed_at=policy.conclusion_confirmed_at,
+            converted_to_project=project is not None,
+            project_id=project.id if project is not None else None,
+            project_name=project.name if project is not None else None,
             current_evaluation_batch_id=policy.current_evaluation_batch_id,
             current_version=self._version_response(version),
             discoveries=[

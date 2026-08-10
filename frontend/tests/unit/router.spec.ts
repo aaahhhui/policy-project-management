@@ -48,6 +48,30 @@ describe("policy router", () => {
     }
   });
 
+  it("allows every authenticated role to view the project ledger and detail", async () => {
+    for (const user of [owner, reader]) {
+      const router = createPolicyRouter({ history: createMemoryHistory(), loadCurrentUser: async () => user });
+
+      await router.push("/projects");
+      expect(router.currentRoute.value.name).toBe("projects");
+      await router.push("/projects/8");
+      expect(router.currentRoute.value.name).toBe("project-detail");
+    }
+  });
+
+  it("redirects unauthenticated project access to login", async () => {
+    const unauthorized = Object.assign(new Error("unauthorized"), { response: { status: 401 } });
+    const router = createPolicyRouter({
+      history: createMemoryHistory(),
+      loadCurrentUser: async () => Promise.reject(unauthorized),
+    });
+
+    await router.push("/projects/8");
+
+    expect(router.currentRoute.value.name).toBe("login");
+    expect(router.currentRoute.value.query.redirect).toBe("/projects/8");
+  });
+
   it("redirects only 401 session failures to login", async () => {
     const unauthorized = Object.assign(new Error("unauthorized"), { response: { status: 401 } });
     const router = createPolicyRouter({
@@ -72,5 +96,18 @@ describe("policy router", () => {
     expect(router.currentRoute.value.name).toBe("service-unavailable");
     expect(router.currentRoute.value.matched).toHaveLength(1);
     expect(router.currentRoute.value.query.retry).toBe("/sources");
+  });
+
+  it("routes project service failures to the existing unavailable page", async () => {
+    const unavailable = Object.assign(new Error("unavailable"), { response: { status: 503 } });
+    const router = createPolicyRouter({
+      history: createMemoryHistory(),
+      loadCurrentUser: async () => Promise.reject(unavailable),
+    });
+
+    await router.push("/projects");
+
+    expect(router.currentRoute.value.name).toBe("service-unavailable");
+    expect(router.currentRoute.value.query.retry).toBe("/projects");
   });
 });

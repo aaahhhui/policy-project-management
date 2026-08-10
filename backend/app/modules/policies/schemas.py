@@ -13,6 +13,9 @@ class PolicyListItem(BaseModel):
     conclusion_confirmed: bool
     current_conclusion_source: str
     conclusion_confirmed_at: datetime | None
+    converted_to_project: bool
+    project_id: int | None
+    project_name: str | None
     sources: list[str]
 
 
@@ -69,6 +72,9 @@ class PolicyDetail(BaseModel):
     conclusion_confirmed: bool
     current_conclusion_source: str
     conclusion_confirmed_at: datetime | None
+    converted_to_project: bool
+    project_id: int | None
+    project_name: str | None
     current_evaluation_batch_id: int | None
     current_version: PolicyVersionResponse
     discoveries: list[PolicyDiscoveryResponse]

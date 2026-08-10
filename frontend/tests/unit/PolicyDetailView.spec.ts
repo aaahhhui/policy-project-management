@@ -4,7 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 import { getPolicy, getPolicyVersions } from "../../src/api/policies";
 import PolicyDetailView from "../../src/views/PolicyDetailView.vue";
 
-vi.mock("vue-router", () => ({ useRoute: () => ({ params: { id: "8" } }) }));
+vi.mock("vue-router", () => ({
+  useRoute: () => ({ params: { id: "8" } }),
+  useRouter: () => ({ push: vi.fn() }),
+  RouterLink: { props: ["to"], template: "<a :href=\"to\"><slot /></a>" },
+}));
 vi.mock("../../src/api/evaluations", () => ({
   getEvaluations: vi.fn().mockResolvedValue([]),
   createEvaluation: vi.fn(),
@@ -29,6 +33,9 @@ describe("PolicyDetailView", () => {
       conclusion_confirmed: false,
       current_conclusion_source: "system_suggestion",
       conclusion_confirmed_at: null,
+      converted_to_project: false,
+      project_id: null,
+      project_name: null,
       current_evaluation_batch_id: null,
       current_version: {
         id: 12,

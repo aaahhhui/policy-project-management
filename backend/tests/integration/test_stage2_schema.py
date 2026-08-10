@@ -160,8 +160,8 @@ def test_stage2_decision_constraints_exist(migrated_inspector: Inspector) -> Non
         check["name"]: check["sqltext"]
         for check in migrated_inspector.get_check_constraints("evaluation_batches")
     }
-    assert "awaiting_confirmation" in status_checks["evaluation_status_v2_code"]
-    assert "confirmed" in status_checks["evaluation_status_v2_code"]
+    assert "awaiting_confirmation" in status_checks["evaluation_status_v3_code"]
+    assert "confirmed" in status_checks["evaluation_status_v3_code"]
 
     confirmation_uniques = {
         tuple(item["column_names"])

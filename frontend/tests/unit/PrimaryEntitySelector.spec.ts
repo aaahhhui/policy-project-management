@@ -18,7 +18,7 @@ it("makes the unchanged current entity explicit and only enables a real switch",
         { entity_seed_code: "ENTITY-BEIJING", label: "北京企业" },
         { entity_seed_code: "ENTITY-SHENZHEN", label: "深圳企业" },
       ],
-      current: { entity_seed_code: "ENTITY-SHENZHEN", entity_legal_name: "深圳企业" },
+      current: { id: 1, entity_seed_code: "ENTITY-SHENZHEN", entity_legal_name: "深圳企业" },
     },
   });
 
@@ -43,7 +43,7 @@ it("syncs the selected radio when the saved current entity loads later", async (
   });
 
   await wrapper.setProps({
-    current: { entity_seed_code: "ENTITY-SHENZHEN", entity_legal_name: "深圳企业" },
+    current: { id: 1, entity_seed_code: "ENTITY-SHENZHEN", entity_legal_name: "深圳企业" },
   });
 
   expect(wrapper.get<HTMLInputElement>('[value="ENTITY-SHENZHEN"]').element.checked).toBe(true);
@@ -58,7 +58,7 @@ it("requires a reason when changing the selected entity", async () => {
         { entity_seed_code: "ENTITY-BEIJING", label: "北京企业" },
         { entity_seed_code: "ENTITY-SUZHOU", label: "苏州企业" },
       ],
-      current: { entity_seed_code: "ENTITY-BEIJING", entity_legal_name: "北京企业" },
+      current: { id: 1, entity_seed_code: "ENTITY-BEIJING", entity_legal_name: "北京企业" },
     },
   });
   await wrapper.get('[value="ENTITY-SUZHOU"]').setValue();

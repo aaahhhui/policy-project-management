@@ -7,6 +7,7 @@ export interface PolicyListItem {
   id: number; title: string; document_number: string | null;
   published_on: string | null; deadline_on: string | null;
   current_conclusion: PolicyCurrentConclusion; conclusion_confirmed: boolean; sources: string[];
+  converted_to_project: boolean; project_id: number | null; project_name: string | null;
 }
 export interface PolicyPage { items: PolicyListItem[]; page: number; page_size: number; total: number; }
 export interface SourceOption { id: number; name: string; }
@@ -28,6 +29,7 @@ export interface PolicyDetail {
   current_conclusion: PolicyCurrentConclusion; conclusion_confirmed: boolean;
   current_conclusion_source: "system_suggestion" | "evaluation_confirmation" | "manual_override";
   conclusion_confirmed_at: string | null;
+  converted_to_project: boolean; project_id: number | null; project_name: string | null;
   current_evaluation_batch_id: number | null; current_version: PolicyVersion;
   discoveries: PolicyDiscovery[]; attachments: PolicyAttachment[];
 }

@@ -22,7 +22,7 @@ EVALUATION_STATUSES = (
 MATCH_LEVELS = ("high", "medium", "low", "uncertain")
 EVALUATION_STATUS_TYPE = Enum(
     *EVALUATION_STATUSES,
-    name="evaluation_status_v2_code",
+    name="evaluation_status_v3_code",
     native_enum=False,
     create_constraint=True,
     validate_strings=True,
