@@ -29,6 +29,9 @@ describe("PolicyDetailView", () => {
       conclusion_confirmed: false,
       current_conclusion_source: "system_suggestion",
       conclusion_confirmed_at: null,
+      converted_to_project: false,
+      project_id: null,
+      project_name: null,
       current_evaluation_batch_id: null,
       current_version: {
         id: 12,

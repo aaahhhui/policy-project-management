@@ -38,6 +38,7 @@ async function handleSignOut() {
         <RouterLink to="/evaluation-rules">评估规则</RouterLink>
         <RouterLink v-if="canManageSources" to="/sources">政策来源</RouterLink>
         <RouterLink to="/profile">企业档案</RouterLink>
+        <RouterLink to="/projects">项目台账</RouterLink>
       </nav>
       <main class="app-content"><RouterView /></main>
     </div>

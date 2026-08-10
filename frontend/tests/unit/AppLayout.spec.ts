@@ -31,6 +31,7 @@ describe("AppLayout", () => {
         { path: "/policies", component: { template: "<div />" } },
         { path: "/evaluation-rules", component: { template: "<div />" } },
         { path: "/sources", component: { template: "<div />" } },
+        { path: "/projects", component: { template: "<div />" } },
       ],
     });
     const wrapper = mount(AppLayout, { global: { plugins: [router, ElementPlus] } });
@@ -39,5 +40,28 @@ describe("AppLayout", () => {
 
     expect(wrapper.text()).toContain("退出失败，请重试");
     expect(wrapper.text()).toContain("退出登录");
+  });
+
+  it("shows the project ledger link to both owners and readers", () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: "/", component: AppLayout },
+        { path: "/policies", component: { template: "<div />" } },
+        { path: "/projects", component: { template: "<div />" } },
+        { path: "/evaluation-rules", component: { template: "<div />" } },
+        { path: "/sources", component: { template: "<div />" } },
+        { path: "/profile", component: { template: "<div />" } },
+      ],
+    });
+
+    for (const roles of [["applicant_owner"], ["reader"]]) {
+      currentUser.value = { id: 1, login_name: "user", display_name: "User", roles };
+      const wrapper = mount(AppLayout, { global: { plugins: [router, ElementPlus] } });
+
+      expect(wrapper.get("nav").text()).toContain("项目台账");
+      expect(wrapper.find('a[href="/projects"]').exists()).toBe(true);
+      wrapper.unmount();
+    }
   });
 });
