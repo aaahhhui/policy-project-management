@@ -3,7 +3,7 @@ import { nextTick, reactive } from "vue";
 import ElementPlus from "element-plus";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { getProjectSummary, getProjects } from "../../src/api/projects";
+import { getProjectSummary, getProjects, type ProjectPage } from "../../src/api/projects";
 import { clearCurrentUser, currentUser } from "../../src/auth/state";
 import ProjectCreateDrawer from "../../src/components/projects/ProjectCreateDrawer.vue";
 import ProjectLedgerView from "../../src/views/ProjectLedgerView.vue";
@@ -72,6 +72,16 @@ describe("ProjectLedgerView", () => {
     wrapper.unmount();
   });
 
+  it("writes server-normalized page and page size back to the URL", async () => {
+    route.query = { status: "submitted", liaison_id: "4", page: "8", page_size: "50" };
+    vi.mocked(getProjects).mockResolvedValue({ ...page, page: 2, page_size: 10 });
+    const wrapper = mount(ProjectLedgerView, { global: { plugins: [ElementPlus], stubs: { RouterLink: { template: "<a><slot /></a>" } } } });
+    await vi.dynamicImportSettled();
+
+    expect(replace).toHaveBeenCalledWith({ query: { status: "submitted", liaison_id: "4", page: "2", page_size: "10" } });
+    wrapper.unmount();
+  });
+
   it("renders total and per-status summaries, reserving conversion text for owners", async () => {
     currentUser.value = { id: 1, login_name: "owner", display_name: "Owner", roles: ["applicant_owner"] };
     const wrapper = mount(ProjectLedgerView, { global: { plugins: [ElementPlus], stubs: { RouterLink: { template: "<a><slot /></a>" }, ElDrawer: { template: "<div><slot /></div>" } } } });
@@ -112,20 +122,52 @@ describe("ProjectLedgerView", () => {
     expect(wrapper.text()).toContain("共 0 个项目");
   });
 
-  it("closes and suppresses conversion controls at the 720px breakpoint and navigates after creation", async () => {
+  it("keeps an owner conversion action available when the summary fails", async () => {
+    currentUser.value = { id: 1, login_name: "owner", display_name: "Owner", roles: ["applicant_owner"] };
+    vi.mocked(getProjectSummary).mockRejectedValueOnce(new Error("offline"));
+    const wrapper = mount(ProjectLedgerView, { global: { plugins: [ElementPlus], stubs: { RouterLink: { template: "<a><slot /></a>" }, ElDrawer: { template: "<div><slot /></div>" } } } });
+    await vi.dynamicImportSettled();
+
+    expect(wrapper.find("[data-retry-project-summary]").exists()).toBe(true);
+    expect(wrapper.get("[data-open-project-conversion]").text()).toBe("将政策转为项目");
+  });
+
+  it("closes an open drawer and suppresses conversion controls at the 720px breakpoint", async () => {
     currentUser.value = { id: 1, login_name: "owner", display_name: "Owner", roles: ["applicant_owner"] };
     const wrapper = mount(ProjectLedgerView, { global: { plugins: [ElementPlus], stubs: { RouterLink: { template: "<a><slot /></a>" }, ElDrawer: { template: "<div><slot /></div>" } } } });
     await vi.dynamicImportSettled();
     await wrapper.get("[data-open-project-conversion]").trigger("click");
     expect(wrapper.findComponent(ProjectCreateDrawer).props("open")).toBe(true);
-    wrapper.findComponent(ProjectCreateDrawer).vm.$emit("created", 19);
-    await nextTick();
-    expect(push).toHaveBeenCalledWith("/projects/19");
 
     window.innerWidth = 720;
     window.dispatchEvent(new Event("resize"));
     await nextTick();
     expect(wrapper.find("[data-open-project-conversion]").exists()).toBe(false);
     expect(wrapper.findComponent(ProjectCreateDrawer).exists()).toBe(false);
+  });
+
+  it("navigates after project creation", async () => {
+    currentUser.value = { id: 1, login_name: "owner", display_name: "Owner", roles: ["applicant_owner"] };
+    const wrapper = mount(ProjectLedgerView, { global: { plugins: [ElementPlus], stubs: { RouterLink: { template: "<a><slot /></a>" }, ElDrawer: { template: "<div><slot /></div>" } } } });
+    await vi.dynamicImportSettled();
+    wrapper.findComponent(ProjectCreateDrawer).vm.$emit("created", 19);
+    await nextTick();
+    expect(push).toHaveBeenCalledWith("/projects/19");
+  });
+
+  it("does not let a response resolve into a destroyed ledger", async () => {
+    route.query = { status: "submitted", liaison_id: "4", page: "8", page_size: "50" };
+    await nextTick();
+    vi.clearAllMocks();
+    let resolvePage: (value: ProjectPage) => void;
+    vi.mocked(getProjects).mockImplementationOnce(() => new Promise<ProjectPage>((resolve) => { resolvePage = resolve; }));
+    const wrapper = mount(ProjectLedgerView, { global: { plugins: [ElementPlus], stubs: { RouterLink: { template: "<a><slot /></a>" } } } });
+    await nextTick();
+    wrapper.unmount();
+    vi.clearAllMocks();
+    resolvePage!({ ...page, page: 2, page_size: 10 });
+    await vi.dynamicImportSettled();
+
+    expect(replace).not.toHaveBeenCalled();
   });
 });

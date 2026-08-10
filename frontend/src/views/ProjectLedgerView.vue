@@ -22,11 +22,13 @@ const createOpen = ref(false);
 const isMobile = ref(false);
 const canCreate = computed(() => currentUser.value?.roles.includes("applicant_owner") ?? false);
 const canConvert = computed(() => canCreate.value && !isMobile.value);
+const conversionLabel = computed(() => summary.value ? `${summary.value.convertible_policy_count} 条政策可转项目` : "将政策转为项目");
 const hasActiveFilters = computed(() => Boolean(
   filters.value.q.trim() || filters.value.primary_entity_seed_code.trim() || filters.value.liaison_id
   || filters.value.status || filters.value.deadline_from || filters.value.deadline_to || filters.value.mine,
 ));
 let requestGeneration = 0;
+let isActive = true;
 
 const statusLabels: Record<string, string> = { pending_application: "待申报", submitted: "已提交", succeeded: "已成功", rejected: "未获批", terminated: "已终止" };
 const statusOrder = ["pending_application", "submitted", "succeeded", "rejected", "terminated"];
@@ -36,18 +38,19 @@ function apiFilters(value: ProjectLedgerFilters) {
   return { q: value.q.trim() || undefined, primary_entity_seed_code: value.primary_entity_seed_code.trim() || undefined, liaison_user_id: Number.isInteger(liaisonId) && liaisonId > 0 ? liaisonId : undefined, status: value.status || undefined, deadline_from: value.deadline_from || undefined, deadline_to: value.deadline_to || undefined, mine: value.mine || undefined, page: value.page, page_size: value.page_size };
 }
 async function loadProjects(): Promise<void> {
+  if (!isActive) return;
   const generation = ++requestGeneration;
   loading.value = true; error.value = "";
   try {
     const page = await getProjects(apiFilters(filters.value));
-    if (generation === requestGeneration) {
+    if (isActive && generation === requestGeneration) {
       projects.value = page.items; total.value = page.total; filters.value.page = page.page;
       filters.value.page_size = [10, 20, 50].includes(page.page_size) ? page.page_size as 10 | 20 | 50 : 20;
       await canonicalizeRoute();
     }
   } catch {
-    if (generation === requestGeneration) error.value = "无法加载项目台账，请检查网络后重试。";
-  } finally { if (generation === requestGeneration) loading.value = false; }
+    if (isActive && generation === requestGeneration) error.value = "无法加载项目台账，请检查网络后重试。";
+  } finally { if (isActive && generation === requestGeneration) loading.value = false; }
 }
 async function loadSummary(): Promise<void> {
   summaryLoading.value = true; summaryError.value = "";
@@ -62,7 +65,7 @@ function queryIsCanonical(query: Record<string, unknown>, canonical: Record<stri
     && canonicalKeys.every((key) => typeof query[key] === "string" && query[key] === canonical[key]);
 }
 async function canonicalizeRoute(): Promise<void> {
-  if (!queryIsCanonical(route.query as Record<string, unknown>, filtersToQuery(filters.value))) await replaceQuery();
+  if (isActive && !queryIsCanonical(route.query as Record<string, unknown>, filtersToQuery(filters.value))) await replaceQuery();
 }
 async function applyFilters(next: ProjectLedgerFilters): Promise<void> { filters.value = next; await replaceQuery(); await loadProjects(); }
 async function changePage(page: number): Promise<void> { if (page < 1 || page === filters.value.page) return; filters.value = { ...filters.value, page }; await replaceQuery(); await loadProjects(); }
@@ -73,10 +76,11 @@ function syncViewport(): void { isMobile.value = window.innerWidth <= 720; if (i
 watch(() => route.query, async (query) => {
   filters.value = filtersFromQuery(query as Record<string, unknown>);
   await canonicalizeRoute();
+  if (!isActive) return;
   await loadProjects();
 }, { deep: true, immediate: true });
 onMounted(() => { syncViewport(); window.addEventListener("resize", syncViewport); void loadSummary(); });
-onBeforeUnmount(() => window.removeEventListener("resize", syncViewport));
+onBeforeUnmount(() => { isActive = false; requestGeneration += 1; window.removeEventListener("resize", syncViewport); });
 </script>
 
 <template>
@@ -84,7 +88,8 @@ onBeforeUnmount(() => window.removeEventListener("resize", syncViewport));
     <header class="page-heading"><div><p class="eyebrow">项目管理 · 可追溯台账</p><h1 id="project-ledger-title">项目台账</h1><p>集中查看政策转化后的项目进展与申报信息。</p></div></header>
     <p v-if="summaryLoading" role="status">正在加载项目汇总…</p>
     <p v-else-if="summaryError" class="summary-error" role="alert">{{ summaryError }} <button type="button" data-retry-project-summary aria-label="重试加载项目汇总" @click="loadSummary">重试</button></p>
-    <section v-else-if="summary" class="project-summary" aria-label="项目汇总"><p>共 {{ summary.total }} 个项目</p><ul><li v-for="status in statusOrder" :key="status">{{ statusLabels[status] }} {{ summary.by_status[status] ?? 0 }}</li></ul><button v-if="canConvert" type="button" class="conversion-link" data-open-project-conversion @click="createOpen = true">{{ summary.convertible_policy_count }} 条政策可转项目</button></section>
+    <section v-else-if="summary" class="project-summary" aria-label="项目汇总"><p>共 {{ summary.total }} 个项目</p><ul><li v-for="status in statusOrder" :key="status">{{ statusLabels[status] }} {{ summary.by_status[status] ?? 0 }}</li></ul></section>
+    <button v-if="canConvert" type="button" class="conversion-link" data-open-project-conversion @click="createOpen = true">{{ conversionLabel }}</button>
     <ProjectFilters :filters="filters" @apply="applyFilters" />
     <p v-if="loading" role="status">正在加载项目台账…</p>
     <template v-else>

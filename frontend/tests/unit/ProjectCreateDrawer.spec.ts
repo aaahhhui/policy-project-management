@@ -83,6 +83,42 @@ describe("ProjectCreateDrawer", () => {
     expect(createProjectFromPolicy).toHaveBeenCalledWith(7, expect.objectContaining({ liaison_user_id: 4, member_user_ids: [5] }), "member-key");
   });
 
+  it("loads the next convertible-policy page", async () => {
+    vi.mocked(getConvertiblePolicies)
+      .mockResolvedValueOnce({ items: [{ id: 7, title: "第一页政策", primary_entity_decision_id: 11, primary_entity_seed_code: "E-1", primary_entity_legal_name: "示例企业", deadline_on: null, conversion_warnings: [] }], page: 1, page_size: 20, total: 21 })
+      .mockResolvedValueOnce({ items: [{ id: 8, title: "第二页政策", primary_entity_decision_id: 12, primary_entity_seed_code: "E-2", primary_entity_legal_name: "第二企业", deadline_on: null, conversion_warnings: [] }], page: 2, page_size: 20, total: 21 });
+    const wrapper = mount(ProjectCreateDrawer, { props: { open: true }, global: { plugins: [ElementPlus], stubs: { ElDrawer: { template: "<div><slot name='header' /><slot /></div>" } } } });
+    await vi.dynamicImportSettled();
+    await wrapper.get(".policy-pages button:last-child").trigger("click");
+    await vi.dynamicImportSettled();
+
+    expect(getConvertiblePolicies).toHaveBeenLastCalledWith(2, 20);
+    expect(wrapper.text()).toContain("第二页政策");
+  });
+
+  it("shows the non-blocking unknown-deadline warning", async () => {
+    vi.mocked(getConvertiblePolicies).mockResolvedValueOnce({
+      items: [{ id: 7, title: "未知截止政策", primary_entity_decision_id: 11, primary_entity_seed_code: "E-1", primary_entity_legal_name: "示例企业", deadline_on: null, conversion_warnings: ["deadline_unknown"] }], page: 1, page_size: 20, total: 1,
+    });
+    const wrapper = mount(ProjectCreateDrawer, { props: { open: true }, global: { plugins: [ElementPlus], stubs: { ElDrawer: { template: "<div><slot name='header' /><slot /></div>" } } } });
+    await vi.dynamicImportSettled();
+
+    expect(wrapper.text()).toContain("申请截止日期未知");
+  });
+
+  it("prevents a duplicate submit while creation is pending", async () => {
+    let resolveCreation: (project: ProjectDetail) => void;
+    vi.mocked(createProjectFromPolicy).mockImplementationOnce(() => new Promise((resolve) => { resolveCreation = resolve; }));
+    const wrapper = mount(ProjectCreateDrawer, { props: { open: true, keyGenerator: () => "pending-key" }, global: { plugins: [ElementPlus], stubs: { ElDrawer: { template: "<div><slot name='header' /><slot /></div>" } } } });
+    await vi.dynamicImportSettled();
+    await wrapper.get("select[aria-label='项目对接人']").setValue("4");
+    await wrapper.get("form").trigger("submit");
+    await wrapper.get("form").trigger("submit");
+    expect(createProjectFromPolicy).toHaveBeenCalledTimes(1);
+    resolveCreation!(createdProject);
+    await vi.dynamicImportSettled();
+  });
+
   it("does not load or render conversion controls for readers", async () => {
     currentUser.value = { id: 2, login_name: "reader", display_name: "Reader", roles: ["reader"] };
     const wrapper = mount(ProjectCreateDrawer, { props: { open: true }, global: { plugins: [ElementPlus], stubs: { ElDrawer: { template: "<div><slot name='header' /><slot /></div>" } } } });
