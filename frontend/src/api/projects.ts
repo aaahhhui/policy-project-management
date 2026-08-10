@@ -32,6 +32,10 @@ export interface ProjectStatusHistoryDetail {
   before_values: Record<string, unknown>; after_values: Record<string, unknown>;
   from_version: number; to_version: number; occurred_at: string;
 }
+export interface ProjectAuditSummary {
+  id: number; action: string; actor: ProjectPerson | null; reason: string | null;
+  before_values: Record<string, unknown>; after_values: Record<string, unknown>; occurred_at: string;
+}
 
 export interface ProjectListItem {
   id: number; policy_id: number; name: string; policy_title: string;
@@ -54,7 +58,8 @@ export interface ProjectDetail {
   progress_note: string | null; result_note: string | null; termination_note: string | null; version: number;
   members: ProjectMemberDetail[]; conversion_warnings: ProjectConversionWarning[]; policy: ProjectPolicySnapshot;
   entity: ProjectEntitySnapshot; applicant_owner: ProjectPerson; liaison: ProjectPerson; dates: ProjectDates;
-  notes: ProjectNotes; status_history: ProjectStatusHistoryDetail[]; capabilities: ProjectCapabilities;
+  notes: ProjectNotes; status_history: ProjectStatusHistoryDetail[]; recent_audits: ProjectAuditSummary[];
+  capabilities: ProjectCapabilities;
 }
 
 export interface ProjectFilters {

@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
-import { getProject, type ProjectDetail } from "../api/projects";
+import { getProject, type ProjectAuditSummary, type ProjectDetail } from "../api/projects";
 import ProjectCorrectionDialog from "../components/projects/ProjectCorrectionDialog.vue";
 import ProjectEditForm from "../components/projects/ProjectEditForm.vue";
 import ProjectStatusForm from "../components/projects/ProjectStatusForm.vue";
@@ -17,11 +17,37 @@ let mediaQuery: MediaQueryList | null = null;
 
 const statusLabels: Record<string, string> = { pending_application: "待申报", submitted: "已提交", succeeded: "已成功", rejected: "未获批", terminated: "已终止" };
 const conclusionLabels: Record<string, string> = { recommend_apply: "建议申报", watch: "持续关注", not_recommended: "暂不建议申报", uncertain: "无法判断" };
+const auditLabels: Record<string, string> = {
+  project_created: "创建项目", project_updated: "更新项目字段",
+  project_liaison_changed: "更换项目对接人", project_members_changed: "调整项目成员",
+  project_primary_entity_corrected: "更正主申报企业", project_status_changed: "变更项目状态",
+  project_status_corrected: "更正项目状态", project_write_denied: "拒绝越权写入",
+};
+const auditFieldLabels: Record<string, string> = {
+  name: "项目名称", deadline_on: "截止日期", liaison_user_id: "对接人账号",
+  member_user_ids: "成员账号", submitted_on: "提交日期", result_on: "结果日期",
+  progress_note: "进展说明", result_note: "结果说明", termination_note: "终止说明",
+  status: "项目状态", primary_entity_decision_id: "主申报企业决策",
+  primary_entity_seed_code: "主申报企业编码",
+};
 const canShowMutations = computed(() => !mobile.value && project.value !== null && (
   project.value.capabilities.can_edit_project || project.value.capabilities.can_update_progress || project.value.capabilities.can_transition || project.value.capabilities.can_correct_status
 ));
 
 function display(value: string | null | undefined): string { return value?.trim() || "——"; }
+function auditValue(value: unknown): string {
+  if (Array.isArray(value)) return value.length ? value.join("、") : "——";
+  if (value === null || value === undefined || value === "") return "——";
+  return String(value);
+}
+function auditChanges(event: ProjectAuditSummary): Array<{ field: string; before: string; after: string }> {
+  const fields = [...new Set([...Object.keys(event.before_values), ...Object.keys(event.after_values)])];
+  return fields.map((field) => ({
+    field: auditFieldLabels[field] ?? field,
+    before: auditValue(event.before_values[field]),
+    after: auditValue(event.after_values[field]),
+  }));
+}
 function updateMobile(): void { mobile.value = mediaQuery?.matches ?? false; }
 function replaceProject(updated: ProjectDetail): void { project.value = updated; }
 async function load(): Promise<void> {
@@ -50,10 +76,24 @@ onBeforeUnmount(() => mediaQuery?.removeEventListener("change", updateMobile));
         <div><h2>记录</h2><p>进展：{{ display(project.notes.progress_note) }}</p><p>结果：{{ display(project.notes.result_note) }}</p><p>终止：{{ display(project.notes.termination_note) }}</p></div>
       </section>
       <ProjectStatusHistory :entries="project.status_history" />
+      <section data-project-audits class="audit-summary" aria-labelledby="project-audit-title">
+        <h2 id="project-audit-title">最近审计</h2>
+        <p v-if="project.recent_audits.length === 0">暂无审计记录。</p>
+        <ol v-else>
+          <li v-for="event in project.recent_audits" :key="event.id">
+            <div class="audit-heading"><strong>{{ auditLabels[event.action] ?? event.action }}</strong><span>{{ event.actor?.display_name ?? "系统" }} · {{ event.occurred_at }}</span></div>
+            <ul v-if="auditChanges(event).length" class="audit-changes">
+              <li v-for="change in auditChanges(event)" :key="change.field">{{ change.field }}：{{ change.before }} → {{ change.after }}</li>
+            </ul>
+            <p v-if="event.reason">原因：{{ event.reason }}</p>
+          </li>
+        </ol>
+      </section>
     </template>
   </section>
 </template>
 
 <style scoped>
 .project-detail{max-width:78rem;margin:0 auto;color:#29435f}.heading{margin-bottom:1rem;padding-bottom:1rem;border-bottom:2px solid #1e568c}.eyebrow{margin:0 0 .35rem;color:#6a7e95;font-size:.75rem;font-weight:800;letter-spacing:.1em}.title-row{display:flex;gap:1rem;justify-content:space-between;align-items:start}.heading h1{margin:0;color:#1b3352;font:700 clamp(1.75rem,3vw,2.4rem)/1.2 "Noto Serif SC","Songti SC",serif}.status{display:inline-block;margin:.65rem 0 0;padding:.2rem .5rem;color:#174f7e;background:#eef5fa;font-weight:800}.facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.75rem}.facts>div,.mutations{padding:.85rem;border:1px solid #d8e2ec;background:#fff}.facts h2{margin:0 0 .5rem;color:#1b3352;font:700 1rem/1.2 "Noto Serif SC","Songti SC",serif}.facts p{margin:.35rem 0}.facts small{color:#60758d}.facts a{color:#174f7e;font-weight:700}.mutations{width:min(31rem,52vw);display:grid;gap:1rem}.error{padding:.75rem;color:#9b1c1c;background:#fff1f0}.error button{margin-left:.5rem}@media(max-width:720px){.facts{grid-template-columns:1fr}.title-row{display:block}.mutations{width:auto}}
+.audit-summary{margin-top:1rem;padding:1rem;border:1px solid #d8e2ec;background:#fff}.audit-summary h2{margin-top:0;color:#1b3352;font-family:"Noto Serif SC","Songti SC",serif}.audit-summary>ol{margin:0;padding-left:1.25rem}.audit-summary>ol>li{padding:.65rem 0}.audit-heading{display:flex;gap:.75rem;justify-content:space-between}.audit-heading span{color:#60758d;font-size:.85rem}.audit-changes{margin:.4rem 0 0;color:#435d78}
 </style>

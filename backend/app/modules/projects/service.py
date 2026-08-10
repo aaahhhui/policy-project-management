@@ -9,6 +9,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from app.modules.audit.models import AuditEvent
 from app.modules.audit.service import AuditService
 from app.modules.auth.models import User
 from app.modules.evaluations.models import PrimaryEntityDecision
@@ -31,6 +32,7 @@ from app.modules.projects.schemas import (
     ConvertiblePolicyPage,
     ProjectCreateInput,
     ProjectCapabilitiesResponse,
+    ProjectAuditSummary,
     ProjectConversionWarning,
     ProjectDates,
     ProjectDetail,
@@ -295,7 +297,7 @@ class ProjectService:
             )
         project.version += 1
         self.db.flush()
-        self._record_update_audit(project=project, actor=actor, before=before)
+        self._record_update_audits(project=project, actor=actor, before=before)
         return ProjectQueryService(self.db).detail(project.id, actor=actor)
 
     def correct_primary_entity(
@@ -490,6 +492,8 @@ class ProjectService:
         return project
 
     def _validate_update(self, *, project: Project, changes: dict[str, object]) -> None:
+        if "name" in changes and changes["name"] is None:
+            raise ProjectFieldValidationFailed()
         if "liaison_user_id" in changes and changes["liaison_user_id"] is None:
             raise ProjectLiaisonRequired()
         result_fields = {"result_on", "result_note"}
@@ -501,12 +505,15 @@ class ProjectService:
         submitted_on = changes.get("submitted_on", project.submitted_on)
         result_on = changes.get("result_on", project.result_on)
         today = date.today()
+        if project.status in {"submitted", "succeeded", "rejected"} and submitted_on is None:
+            raise ProjectFieldValidationFailed()
         if submitted_on is not None and (not isinstance(submitted_on, date) or submitted_on > today):
             raise ProjectFieldValidationFailed()
         if result_on is not None and (
             not isinstance(result_on, date)
             or result_on > today
-            or (isinstance(submitted_on, date) and result_on < submitted_on)
+            or not isinstance(submitted_on, date)
+            or result_on < submitted_on
         ):
             raise ProjectFieldValidationFailed()
         if project.status in {"succeeded", "rejected"} and result_on is None:
@@ -565,19 +572,29 @@ class ProjectService:
             return value[:256]
         return value
 
-    def _record_update_audit(
+    def _record_update_audits(
         self, *, project: Project, actor: User, before: dict[str, object]
     ) -> None:
         after = self._audit_values(project, set(before))
-        changed_before = {field: value for field, value in before.items() if after[field] != value}
-        if changed_before:
+        changed_fields = {field for field, value in before.items() if after[field] != value}
+
+        def record(action: str, fields: set[str]) -> None:
+            if not fields:
+                return
             AuditService(self.db).record(
-                "project_updated",
+                action,
                 actor.id,
                 "project",
                 project.id,
-                changes={"before": changed_before, "after": {field: after[field] for field in changed_before}},
+                changes={
+                    "before": {field: before[field] for field in fields},
+                    "after": {field: after[field] for field in fields},
+                },
             )
+
+        record("project_updated", changed_fields - {"liaison_user_id", "member_user_ids"})
+        record("project_liaison_changed", changed_fields & {"liaison_user_id"})
+        record("project_members_changed", changed_fields & {"member_user_ids"})
 
 class ProjectQueryService:
     def __init__(self, db: Session) -> None:
@@ -654,6 +671,16 @@ class ProjectQueryService:
                 .order_by(ProjectStatusHistory.occurred_at.desc(), ProjectStatusHistory.id.desc())
             )
         )
+        audit_rows = self.db.execute(
+            select(AuditEvent, User)
+            .outerjoin(User, User.id == AuditEvent.actor_id)
+            .where(
+                AuditEvent.object_type == "project",
+                AuditEvent.object_id == project.id,
+            )
+            .order_by(AuditEvent.occurred_at.desc(), AuditEvent.id.desc())
+            .limit(20)
+        ).all()
         return ProjectDetail(
             id=project.id,
             policy_id=project.policy_id,
@@ -730,6 +757,22 @@ class ProjectQueryService:
                     occurred_at=entry.occurred_at,
                 )
                 for entry in history
+            ],
+            recent_audits=[
+                ProjectAuditSummary(
+                    id=event.id,
+                    action=event.action,
+                    actor=(
+                        ProjectPerson(id=audit_actor.id, display_name=audit_actor.display_name)
+                        if audit_actor is not None
+                        else None
+                    ),
+                    reason=event.reason,
+                    before_values=(event.changes or {}).get("before", {}),
+                    after_values=(event.changes or {}).get("after", {}),
+                    occurred_at=event.occurred_at,
+                )
+                for event, audit_actor in audit_rows
             ],
             capabilities=self._capabilities(project, actor),
         )

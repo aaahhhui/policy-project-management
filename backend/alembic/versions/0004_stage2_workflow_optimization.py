@@ -21,7 +21,7 @@ def upgrade() -> None:
     with op.batch_alter_table("evaluation_batches") as batch_op:
         batch_op.drop_constraint("evaluation_status_v2_code", type_="check")
         batch_op.create_check_constraint(
-            "evaluation_status_v3_code",
+            "evaluation_status_v2_code",
             "status IN ('pending', 'running', 'succeeded', 'awaiting_confirmation', "
             "'confirmed', 'cancelled', 'failed')",
         )
@@ -137,7 +137,7 @@ def downgrade() -> None:
         batch_op.drop_column("cancel_reason")
         batch_op.drop_column("cancelled_at")
         batch_op.drop_column("cancelled_by")
-        batch_op.drop_constraint("evaluation_status_v3_code", type_="check")
+        batch_op.drop_constraint("evaluation_status_v2_code", type_="check")
         batch_op.create_check_constraint(
             "evaluation_status_v2_code",
             "status IN ('pending', 'running', 'succeeded', 'awaiting_confirmation', "

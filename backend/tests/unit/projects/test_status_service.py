@@ -250,6 +250,7 @@ def test_succeeded_can_correct_to_rejected_with_revalidated_result_date(db) -> N
 
 def test_terminated_restores_its_actual_pre_termination_status(db) -> None:
     owner, _liaison, project = _project(db, status="terminated")
+    project.submitted_on = date.today() - timedelta(days=2)
     db.add(ProjectStatusHistory(project_id=project.id, action="transitioned", previous_status="submitted", new_status="terminated", actor_id=owner.id, actor_display_name=owner.display_name, reason=None, related_date=None, before_values={}, after_values={}, from_version=0, to_version=1, occurred_at=datetime.now(UTC)))
     db.flush()
 
@@ -262,7 +263,7 @@ def test_terminated_restores_its_actual_pre_termination_status(db) -> None:
         detail.result_note,
         detail.termination_note,
         detail.version,
-    ) == ("submitted", None, None, None, None, 2)
+    ) == ("submitted", date.today() - timedelta(days=2), None, None, None, 2)
     history = list(db.scalars(select(ProjectStatusHistory).order_by(ProjectStatusHistory.id)))[-1]
     assert (history.action, history.previous_status, history.new_status) == ("corrected", "terminated", "submitted")
     assert (history.from_version, history.to_version, history.reason) == (1, 2, "wrong state")

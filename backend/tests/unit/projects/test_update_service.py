@@ -31,10 +31,19 @@ def _project(db, *, status: str = "pending_application"):
         primary=primary,
         owner=owner,
         liaison=liaison,
-        status="pending_application" if status in {"succeeded", "rejected", "terminated"} else status,
+        status=(
+            "pending_application"
+            if status in {"submitted", "succeeded", "rejected", "terminated"}
+            else status
+        ),
     )
+    if status == "submitted":
+        project.status = status
+        project.submitted_on = date.today() - timedelta(days=1)
+        db.flush()
     if status in {"succeeded", "rejected"}:
         project.status = status
+        project.submitted_on = date.today() - timedelta(days=1)
         project.result_on = date.today()
         db.flush()
     if status == "terminated":
@@ -45,7 +54,7 @@ def _project(db, *, status: str = "pending_application"):
 
 
 def test_owner_updates_every_maintained_field_atomically(db) -> None:
-    owner, _liaison, _policy, project = _project(db, status="succeeded")
+    owner, original_liaison, _policy, project = _project(db, status="succeeded")
     new_liaison = create_user(db, login_name="new-liaison", display_name="New liaison", roles=())
     member = create_user(db, login_name="update-member", display_name="Member", roles=())
 
@@ -70,9 +79,32 @@ def test_owner_updates_every_maintained_field_atomically(db) -> None:
     assert detail.liaison_user_id == new_liaison.id
     assert detail.result_on == date.today()
     assert [item.user_id for item in detail.members] == [member.id]
-    audit = db.scalar(select(AuditEvent).where(AuditEvent.action == "project_updated"))
-    assert audit is not None
-    assert audit.changes is not None and audit.changes["after"]["name"] == "Updated project"
+    audits = {
+        event.action: event
+        for event in db.scalars(select(AuditEvent).order_by(AuditEvent.id))
+    }
+    assert {"project_updated", "project_liaison_changed", "project_members_changed"} <= (
+        audits.keys()
+    )
+    updated_changes = audits["project_updated"].changes
+    assert updated_changes is not None
+    assert updated_changes["after"]["name"] == "Updated project"
+    assert "liaison_user_id" not in updated_changes["after"]
+    assert "member_user_ids" not in updated_changes["after"]
+    assert audits["project_liaison_changed"].changes == {
+        "before": {"liaison_user_id": original_liaison.id},
+        "after": {"liaison_user_id": new_liaison.id},
+    }
+    assert audits["project_members_changed"].changes == {
+        "before": {"member_user_ids": []},
+        "after": {"member_user_ids": [member.id]},
+    }
+    assert [event.action for event in detail.recent_audits[:3]] == [
+        "project_members_changed",
+        "project_liaison_changed",
+        "project_updated",
+    ]
+    assert detail.recent_audits[0].actor.display_name == "Owner"
 
 
 def test_liaison_mixed_allowed_and_forbidden_fields_is_wholly_rejected(db) -> None:
@@ -178,6 +210,52 @@ def test_explicit_null_liaison_is_rejected_without_mutation(db) -> None:
         ProjectService(db).update_project(
             project.id, ProjectUpdateInput(expected_version=1, liaison_user_id=None), owner
         )
+    assert project.version == 1
+
+
+def test_explicit_null_name_is_rejected_without_mutation(db) -> None:
+    owner, _liaison, _policy, project = _project(db)
+
+    with pytest.raises(ProjectFieldValidationFailed):
+        ProjectService(db).update_project(
+            project.id, ProjectUpdateInput(expected_version=1, name=None), owner
+        )
+
+    assert project.name == "Eligible policy"
+    assert project.version == 1
+
+
+@pytest.mark.parametrize("status", ["submitted", "succeeded", "rejected"])
+def test_status_requiring_submission_rejects_clearing_submitted_date(db, status) -> None:
+    owner, _liaison, _policy, project = _project(db, status=status)
+    project.submitted_on = date.today()
+    if status in {"succeeded", "rejected"}:
+        project.result_on = date.today()
+    db.flush()
+
+    with pytest.raises(ProjectFieldValidationFailed):
+        ProjectService(db).update_project(
+            project.id,
+            ProjectUpdateInput(expected_version=1, submitted_on=None),
+            owner,
+        )
+
+    assert project.submitted_on == date.today()
+    assert project.version == 1
+
+
+def test_result_date_rejects_project_without_submission_date(db) -> None:
+    owner, _liaison, _policy, project = _project(db)
+    project.status = "succeeded"
+    project.result_on = date.today()
+
+    with pytest.raises(ProjectFieldValidationFailed):
+        ProjectService(db).update_project(
+            project.id,
+            ProjectUpdateInput(expected_version=1, result_on=date.today()),
+            owner,
+        )
+
     assert project.version == 1
 
 

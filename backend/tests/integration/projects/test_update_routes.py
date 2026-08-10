@@ -39,3 +39,32 @@ def test_patch_denial_is_atomic_and_the_old_liaison_loses_access(client, db, see
     assert denied.status_code == 403
     db.expire_all()
     assert db.get(Project, project.id).name == "Eligible policy"
+
+
+def test_patch_invalid_name_and_status_dates_return_defined_422(
+    client, db, seeded_owner, seeded_owner_password
+) -> None:
+    liaison = create_user(db, login_name="validation-liaison", display_name="Liaison", roles=())
+    policy, primary = create_confirmed_recommend_policy(db, owner=seeded_owner)
+    project = create_project(
+        db, policy=policy, primary=primary, owner=seeded_owner, liaison=liaison
+    )
+    project.status = "submitted"
+    project.submitted_on = date.today()
+    db.commit()
+    _login(client, "owner", seeded_owner_password)
+
+    for payload in (
+        {"expected_version": 1, "name": None},
+        {"expected_version": 1, "submitted_on": None},
+    ):
+        response = client.patch(f"/api/projects/{project.id}", json=payload)
+        assert response.status_code == 422
+        assert response.json()["detail"] == {"code": "project_field_validation_failed"}
+
+    db.expire_all()
+    persisted = db.get(Project, project.id)
+    assert persisted is not None
+    assert persisted.name == "Eligible policy"
+    assert persisted.submitted_on == date.today()
+    assert persisted.version == 1

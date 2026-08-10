@@ -33,7 +33,7 @@ describe("ProjectCreateDrawer", () => {
     policy: { id: 7, title: "制造业数字化改造通知", conclusion: "recommend_apply", conclusion_source: "evaluation_confirmation", conclusion_confirmed_at: "2026-08-01T00:00:00Z" },
     entity: { decision_id: 11, seed_code: "E-1", legal_name: "示例企业" }, applicant_owner: { id: 1, display_name: "Owner" },
     liaison: { id: 4, display_name: "对接人" }, dates: { deadline_on: "2026-01-01", submitted_on: null, result_on: null },
-    notes: { progress_note: null, result_note: null, termination_note: null }, status_history: [],
+    notes: { progress_note: null, result_note: null, termination_note: null }, status_history: [], recent_audits: [],
     capabilities: { can_edit_project: true, can_update_progress: true, can_transition: true, can_correct_status: true, can_correct_primary_entity: true },
   };
 

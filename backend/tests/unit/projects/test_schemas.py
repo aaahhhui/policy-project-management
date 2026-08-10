@@ -28,6 +28,17 @@ def test_name_is_trimmed_and_must_remain_within_bounds() -> None:
         ProjectCreateInput(liaison_user_id=7, name="x" * 301)
 
 
+def test_update_name_is_trimmed_and_must_remain_within_bounds() -> None:
+    payload = ProjectUpdateInput(expected_version=1, name="  Updated project  ")
+
+    assert payload.name == "Updated project"
+
+    with pytest.raises(ValidationError):
+        ProjectUpdateInput(expected_version=1, name="   ")
+    with pytest.raises(ValidationError):
+        ProjectUpdateInput(expected_version=1, name="x" * 301)
+
+
 def test_member_ids_must_be_unique() -> None:
     with pytest.raises(ValidationError):
         ProjectCreateInput(liaison_user_id=7, member_user_ids=[3, 3])

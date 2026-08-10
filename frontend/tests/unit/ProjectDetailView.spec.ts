@@ -18,6 +18,10 @@ const project: ProjectDetail = {
   policy: { id: 7, title: "制造业数字化改造通知", conclusion: "recommend_apply", conclusion_source: "evaluation_confirmation", conclusion_confirmed_at: "2026-07-31T00:00:00Z" },
   entity: { decision_id: 11, seed_code: "E-1", legal_name: "示例企业" }, applicant_owner: { id: 1, display_name: "王负责人" }, liaison: { id: 4, display_name: "李联络" },
   dates: { deadline_on: null, submitted_on: "2026-08-01", result_on: null }, notes: { progress_note: null, result_note: null, termination_note: null }, status_history: [],
+  recent_audits: [{
+    id: 31, action: "project_liaison_changed", actor: { id: 1, display_name: "王负责人" }, reason: null,
+    before_values: { liaison_user_id: 4 }, after_values: { liaison_user_id: 8 }, occurred_at: "2026-08-10T09:00:00Z",
+  }],
   capabilities: { can_edit_project: false, can_update_progress: false, can_transition: false, can_correct_status: false, can_correct_primary_entity: false },
 };
 
@@ -40,6 +44,9 @@ describe("ProjectDetailView", () => {
     expect(text).toContain("建议申报");
     expect(text).toContain("——");
     expect(wrapper.find("[data-project-mutations]").exists()).toBe(false);
+    expect(wrapper.find("[data-project-audits]").text()).toContain("更换项目对接人");
+    expect(wrapper.find("[data-project-audits]").text()).toContain("王负责人");
+    expect(wrapper.find("[data-project-audits]").text()).toContain("4 → 8");
   });
 
   it("uses backend conclusion codes and reloads when the route project ID changes", async () => {

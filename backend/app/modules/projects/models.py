@@ -77,6 +77,19 @@ class Project(Base, TimestampMixin):
             name="ck_projects_result_status_requires_result_on",
         ),
         CheckConstraint(
+            "status NOT IN ('submitted', 'succeeded', 'rejected') "
+            "OR submitted_on IS NOT NULL",
+            name="ck_projects_submission_status_requires_submitted_on",
+        ),
+        CheckConstraint(
+            "result_on IS NULL OR (submitted_on IS NOT NULL AND result_on >= submitted_on)",
+            name="ck_projects_result_requires_submission_order",
+        ),
+        CheckConstraint(
+            "length(trim(name)) > 0",
+            name="ck_projects_name_nonblank",
+        ),
+        CheckConstraint(
             "status != 'terminated' OR (termination_note IS NOT NULL "
             "AND length(termination_note) > 0)",
             name="ck_projects_terminated_requires_note",

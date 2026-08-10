@@ -46,6 +46,8 @@ def _project(
     project.deadline_on = deadline_on
     project.updated_at = updated_at
     project.status = status
+    if status in {"submitted", "succeeded", "rejected"}:
+        project.submitted_on = min(deadline_on or date.today(), date.today())
     if status in {"succeeded", "rejected"}:
         project.result_on = deadline_on or date.today()
     if status == "terminated":

@@ -266,9 +266,27 @@ def test_initial_migration_mysql_check_constraint_names_are_schema_unique(
 
     command.upgrade(config, "head", sql=True)
 
-    check_names = re.findall(r"CONSTRAINT ([A-Za-z0-9_]+) CHECK", output.getvalue())
-    assert len(check_names) == len(set(check_names))
-    assert {"collection_task_status_code", "collection_task_item_status_code"} <= set(
-        check_names
+    active_check_names: set[str] = set()
+    created_check_names: set[str] = set()
+    operations = re.finditer(
+        r"DROP CHECK (?P<drop>[A-Za-z0-9_]+)|"
+        r"CONSTRAINT (?P<create>[A-Za-z0-9_]+) CHECK",
+        output.getvalue(),
     )
+    for operation in operations:
+        dropped_name = operation.group("drop")
+        if dropped_name is not None:
+            active_check_names.discard(dropped_name)
+            continue
+        created_name = operation.group("create")
+        assert created_name is not None
+        assert created_name not in active_check_names
+        active_check_names.add(created_name)
+        created_check_names.add(created_name)
+
+    assert {"collection_task_status_code", "collection_task_item_status_code"} <= (
+        created_check_names
+    )
+    assert "evaluation_status_v3_code" in active_check_names
+    assert "evaluation_status_v2_code" not in active_check_names
     get_settings.cache_clear()

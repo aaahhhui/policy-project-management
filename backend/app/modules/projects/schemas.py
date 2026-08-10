@@ -219,6 +219,18 @@ class ProjectStatusHistoryDetail(BaseModel):
     occurred_at: datetime
 
 
+class ProjectAuditSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    action: str
+    actor: ProjectPerson | None
+    reason: str | None
+    before_values: dict[str, object]
+    after_values: dict[str, object]
+    occurred_at: datetime
+
+
 class ProjectListItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -305,4 +317,5 @@ class ProjectDetail(BaseModel):
     dates: ProjectDates
     notes: ProjectNotes
     status_history: list[ProjectStatusHistoryDetail]
+    recent_audits: list[ProjectAuditSummary]
     capabilities: ProjectCapabilitiesResponse
