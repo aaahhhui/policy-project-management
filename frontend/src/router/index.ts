@@ -12,6 +12,7 @@ import PolicyCenterView from "../views/PolicyCenterView.vue";
 import PolicyDetailView from "../views/PolicyDetailView.vue";
 import EvaluationRulesView from "../views/EvaluationRulesView.vue";
 import EvaluationRuleDetailView from "../views/EvaluationRuleDetailView.vue";
+import ProjectLedgerView from "../views/ProjectLedgerView.vue";
 
 type RouterOptions = {
   history?: RouterHistory;
@@ -37,7 +38,7 @@ export function createPolicyRouter(options: RouterOptions = {}) {
           { path: "profile", name: "enterprise-profile", component: EnterpriseProfileView },
           { path: "policies", name: "policies", component: PolicyCenterView },
           { path: "policies/:id", name: "policy-detail", component: PolicyDetailView },
-          { path: "projects", name: "projects", component: { template: "<section>项目台账</section>" } },
+          { path: "projects", name: "projects", component: ProjectLedgerView },
           { path: "projects/:id", name: "project-detail", component: { template: "<section>项目详情</section>" } },
           { path: "evaluation-rules", name: "evaluation-rules", component: EvaluationRulesView },
           { path: "evaluation-rules/:id", name: "evaluation-rule-detail", component: EvaluationRuleDetailView },
