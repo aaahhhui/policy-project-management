@@ -26,8 +26,27 @@ describe("ProjectEditForm", () => {
     await wrapper.get("form").trigger("submit");
 
     expect(updateProject).toHaveBeenCalledWith(19, expect.objectContaining({ expected_version: 3, name: "新项目", member_user_ids: [5], progress_note: null }));
-    expect(Object.keys(vi.mocked(updateProject).mock.calls[0][1])).toEqual(expect.arrayContaining(["name", "deadline_on", "liaison_user_id", "member_user_ids", "submitted_on", "result_on", "progress_note", "result_note", "termination_note", "expected_version"]));
     expect(wrapper.emitted("updated")?.[0]?.[0]).toMatchObject({ version: 4, name: "新项目" });
+  });
+
+  it.each([
+    ["pending_application", ["expected_version", "name", "deadline_on", "liaison_user_id", "member_user_ids", "submitted_on", "progress_note"]],
+    ["submitted", ["expected_version", "name", "deadline_on", "liaison_user_id", "member_user_ids", "submitted_on", "progress_note"]],
+    ["succeeded", ["expected_version", "name", "deadline_on", "liaison_user_id", "member_user_ids", "submitted_on", "progress_note", "result_on", "result_note"]],
+    ["rejected", ["expected_version", "name", "deadline_on", "liaison_user_id", "member_user_ids", "submitted_on", "progress_note", "result_on", "result_note"]],
+    ["terminated", ["expected_version", "name", "deadline_on", "liaison_user_id", "member_user_ids", "submitted_on", "progress_note", "termination_note"]],
+  ] as const)("sends only %s-compatible owner maintenance fields", async (status, expectedKeys) => {
+    const stateProject = {
+      ...project, status,
+      result_on: status === "succeeded" || status === "rejected" ? "2026-08-04" : null,
+      result_note: status === "succeeded" || status === "rejected" ? "结果" : null,
+      termination_note: status === "terminated" ? "终止" : null,
+    };
+    vi.mocked(updateProject).mockResolvedValue(stateProject);
+    const wrapper = mount(ProjectEditForm, { props: { project: stateProject } });
+    await wrapper.get("form").trigger("submit");
+
+    expect(Object.keys(vi.mocked(updateProject).mock.calls[0][1]).sort()).toEqual([...expectedKeys].sort());
   });
 
   it("gives a liaison only dates and notes, never owner fields", async () => {
@@ -39,6 +58,7 @@ describe("ProjectEditForm", () => {
     expect(wrapper.find("[aria-label='项目对接人']").exists()).toBe(false);
     await wrapper.get("form").trigger("submit");
     expect(updateProject).toHaveBeenCalledWith(19, expect.not.objectContaining({ name: expect.anything(), deadline_on: expect.anything(), liaison_user_id: expect.anything(), member_user_ids: expect.anything() }));
+    expect(Object.keys(vi.mocked(updateProject).mock.calls[0][1]).sort()).toEqual(["expected_version", "submitted_on", "progress_note"].sort());
   });
 
   it("uses active-user name and role selectors, validates required owner values, and sends selected members", async () => {

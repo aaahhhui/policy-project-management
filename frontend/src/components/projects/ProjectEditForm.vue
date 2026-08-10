@@ -11,9 +11,8 @@ const error = ref("");
 const conflict = ref(false);
 const users = ref<ProjectUserOption[]>([]);
 const form = reactive({ name: "", deadline_on: "", liaison_user_id: "", member_user_ids: [] as string[], submitted_on: "", result_on: "", progress_note: "", result_note: "", termination_note: "" });
-const liaisonFields = ["submitted_on", "result_on", "progress_note", "result_note", "termination_note"] as const;
-const ownerFields = ["name", "deadline_on", "liaison_user_id", "member_user_ids", ...liaisonFields] as const;
 const isOwner = computed(() => props.project.capabilities.can_edit_project);
+const canUpdateMaintenance = computed(() => isOwner.value || props.project.capabilities.can_update_progress);
 
 function syncForm(project: ProjectDetail): void {
   form.name = project.name; form.deadline_on = project.deadline_on ?? ""; form.liaison_user_id = String(project.liaison_user_id);
@@ -32,13 +31,19 @@ async function submit(): Promise<void> {
   if (isOwner.value && !form.name.trim()) { error.value = "项目名称不能为空。"; return; }
   if (isOwner.value && (!Number.isInteger(Number(form.liaison_user_id)) || Number(form.liaison_user_id) < 1)) { error.value = "请选择项目对接人。"; return; }
   saving.value = true; error.value = ""; conflict.value = false;
-  const source = isOwner.value ? ownerFields : liaisonFields;
-  const values = {
-    name: normalize(form.name), deadline_on: form.deadline_on || null, liaison_user_id: Number(form.liaison_user_id) || null, member_user_ids: memberIds(),
-    submitted_on: form.submitted_on || null, result_on: form.result_on || null, progress_note: normalize(form.progress_note), result_note: normalize(form.result_note), termination_note: normalize(form.termination_note),
-  };
-  const payload = Object.fromEntries(source.map((field) => [field, values[field]])) as Omit<ProjectUpdateInput, "expected_version">;
-  try { emit("updated", await updateProject(props.project.id, { expected_version: props.project.version, ...payload })); }
+  const payload: ProjectUpdateInput = { expected_version: props.project.version };
+  if (isOwner.value) {
+    payload.name = normalize(form.name); payload.deadline_on = form.deadline_on || null;
+    payload.liaison_user_id = Number(form.liaison_user_id); payload.member_user_ids = memberIds();
+  }
+  if (canUpdateMaintenance.value) {
+    payload.submitted_on = form.submitted_on || null; payload.progress_note = normalize(form.progress_note);
+    if (props.project.status === "succeeded" || props.project.status === "rejected") {
+      payload.result_on = form.result_on || null; payload.result_note = normalize(form.result_note);
+    }
+    if (props.project.status === "terminated") payload.termination_note = normalize(form.termination_note);
+  }
+  try { emit("updated", await updateProject(props.project.id, payload)); }
   catch (caught) { conflict.value = isVersionConflict(caught); error.value = businessErrorMessage(caught, "项目维护未完成，请稍后重试。"); }
   finally { saving.value = false; }
 }
