@@ -43,4 +43,10 @@ describe("ProjectFilters", () => {
       deadline_from: "", deadline_to: "", mine: false, page: 1, page_size: 20,
     }]);
   });
+
+  it("rejects invalid liaison identifiers while canonicalizing query state", () => {
+    const filters = filtersFromQuery({ liaison_id: "-4", status: "not-a-status", page: "0", page_size: "30", unknown: "value" });
+
+    expect(filtersToQuery(filters)).toEqual({});
+  });
 });

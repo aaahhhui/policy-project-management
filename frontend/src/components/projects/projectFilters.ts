@@ -24,13 +24,20 @@ function one(value: unknown): string | undefined {
   return Array.isArray(value) ? value[0] : typeof value === "string" ? value : undefined;
 }
 
+function liaisonId(value: unknown): string {
+  const text = one(value)?.trim() ?? "";
+  if (!/^[1-9]\d*$/.test(text)) return "";
+  const parsed = Number(text);
+  return Number.isSafeInteger(parsed) ? String(parsed) : "";
+}
+
 export function filtersFromQuery(query: Record<string, unknown>): ProjectLedgerFilters {
   const pageSize = positiveInteger(one(query.page_size), 20);
   const status = one(query.status);
   return {
     q: one(query.q) ?? "",
     primary_entity_seed_code: one(query.primary_entity_seed_code) ?? "",
-    liaison_id: one(query.liaison_id) ?? "",
+    liaison_id: liaisonId(query.liaison_id),
     status: validStatuses.includes(status as ProjectStatus) ? status as ProjectStatus : "",
     deadline_from: one(query.deadline_from) ?? "",
     deadline_to: one(query.deadline_to) ?? "",
@@ -44,7 +51,8 @@ export function filtersToQuery(filters: ProjectLedgerFilters): Record<string, st
   const query: Record<string, string> = {};
   if (filters.q.trim()) query.q = filters.q.trim();
   if (filters.primary_entity_seed_code.trim()) query.primary_entity_seed_code = filters.primary_entity_seed_code.trim();
-  if (filters.liaison_id) query.liaison_id = filters.liaison_id;
+  const normalizedLiaisonId = liaisonId(filters.liaison_id);
+  if (normalizedLiaisonId) query.liaison_id = normalizedLiaisonId;
   if (filters.status) query.status = filters.status;
   if (filters.deadline_from) query.deadline_from = filters.deadline_from;
   if (filters.deadline_to) query.deadline_to = filters.deadline_to;

@@ -69,6 +69,20 @@ describe("ProjectCreateDrawer", () => {
     expect(wrapper.emitted("created")?.[0]).toEqual([19]);
   });
 
+  it("sends members only once and never repeats the selected liaison", async () => {
+    vi.mocked(createProjectFromPolicy).mockResolvedValueOnce(createdProject);
+    const wrapper = mount(ProjectCreateDrawer, {
+      props: { open: true, keyGenerator: () => "member-key" }, global: { plugins: [ElementPlus], stubs: { ElDrawer: { template: "<div><slot name='header' /><slot /></div>" } } },
+    });
+    await vi.dynamicImportSettled();
+    await wrapper.get("select[aria-label='项目对接人']").setValue("4");
+    await wrapper.get("select[aria-label='项目成员']").setValue(["4", "5"]);
+    await wrapper.get("form").trigger("submit");
+    await vi.dynamicImportSettled();
+
+    expect(createProjectFromPolicy).toHaveBeenCalledWith(7, expect.objectContaining({ liaison_user_id: 4, member_user_ids: [5] }), "member-key");
+  });
+
   it("does not load or render conversion controls for readers", async () => {
     currentUser.value = { id: 2, login_name: "reader", display_name: "Reader", roles: ["reader"] };
     const wrapper = mount(ProjectCreateDrawer, { props: { open: true }, global: { plugins: [ElementPlus], stubs: { ElDrawer: { template: "<div><slot name='header' /><slot /></div>" } } } });

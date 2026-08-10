@@ -1,17 +1,20 @@
 import { mount } from "@vue/test-utils";
+import { nextTick, reactive } from "vue";
 import ElementPlus from "element-plus";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getProjectSummary, getProjects } from "../../src/api/projects";
 import { clearCurrentUser, currentUser } from "../../src/auth/state";
+import ProjectCreateDrawer from "../../src/components/projects/ProjectCreateDrawer.vue";
 import ProjectLedgerView from "../../src/views/ProjectLedgerView.vue";
 
 const replace = vi.fn();
-const route = { query: { status: "submitted", liaison_id: "4", page: "2" } };
+const push = vi.fn();
+const route = reactive<{ query: Record<string, string> }>({ query: { status: "submitted", liaison_id: "4", page: "2" } });
 
 vi.mock("vue-router", () => ({
   useRoute: () => route,
-  useRouter: () => ({ replace }),
+  useRouter: () => ({ replace, push }),
   RouterLink: { template: "<a><slot /></a>" },
 }));
 vi.mock("../../src/api/projects", () => ({
@@ -32,6 +35,7 @@ const page = {
 describe("ProjectLedgerView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024, writable: true });
     clearCurrentUser();
     currentUser.value = { id: 3, login_name: "reader", display_name: "Reader", roles: ["reader"] };
     route.query = { status: "submitted", liaison_id: "4", page: "2" };
@@ -44,13 +48,41 @@ describe("ProjectLedgerView", () => {
     await vi.dynamicImportSettled();
 
     expect(getProjects).toHaveBeenCalledWith(expect.objectContaining({ status: "submitted", liaison_user_id: 4, page: 2, page_size: 20 }));
-    expect(wrapper.text()).toContain("3 条政策可转项目");
+    expect(wrapper.text()).toContain("共 8 个项目");
     expect(wrapper.text()).toContain("数字化改造项目");
     expect(wrapper.find("[data-status-legend]").exists()).toBe(false);
     expect(wrapper.find("[data-open-project-conversion]").exists()).toBe(false);
 
     await wrapper.get("[aria-label='下一页']").trigger("click");
     expect(replace).toHaveBeenCalledWith({ query: { status: "submitted", liaison_id: "4", page: "3" } });
+  });
+
+  it("canonicalizes invalid query values and reloads when browser history changes the route", async () => {
+    route.query = { liaison_id: "-3", status: "unknown", page: "0", page_size: "30", extra: "drop" };
+    const wrapper = mount(ProjectLedgerView, { global: { plugins: [ElementPlus], stubs: { RouterLink: { template: "<a><slot /></a>" } } } });
+    await vi.dynamicImportSettled();
+
+    expect(replace).toHaveBeenCalledWith({ query: {} });
+    expect(getProjects).toHaveBeenLastCalledWith(expect.objectContaining({ liaison_user_id: undefined, status: undefined, page: 1, page_size: 20 }));
+
+    route.query = { status: "submitted", liaison_id: "4", page: "3", page_size: "50" };
+    await nextTick();
+    await vi.dynamicImportSettled();
+    expect(getProjects).toHaveBeenLastCalledWith(expect.objectContaining({ status: "submitted", liaison_user_id: 4, page: 3, page_size: 50 }));
+    wrapper.unmount();
+  });
+
+  it("renders total and per-status summaries, reserving conversion text for owners", async () => {
+    currentUser.value = { id: 1, login_name: "owner", display_name: "Owner", roles: ["applicant_owner"] };
+    const wrapper = mount(ProjectLedgerView, { global: { plugins: [ElementPlus], stubs: { RouterLink: { template: "<a><slot /></a>" }, ElDrawer: { template: "<div><slot /></div>" } } } });
+    await vi.dynamicImportSettled();
+
+    expect(wrapper.text()).toContain("共 8 个项目");
+    expect(wrapper.text()).toContain("已提交 3");
+    expect(wrapper.get("[data-open-project-conversion]").text()).toBe("3 条政策可转项目");
+    currentUser.value = { id: 3, login_name: "reader", display_name: "Reader", roles: ["reader"] };
+    await nextTick();
+    expect(wrapper.text()).not.toContain("3 条政策可转项目");
   });
 
   it("renders loading, error and empty states without losing the summary", async () => {
@@ -63,6 +95,37 @@ describe("ProjectLedgerView", () => {
     await wrapper.get("button[data-retry-projects]").trigger("click");
     await vi.dynamicImportSettled();
     expect(wrapper.text()).toContain("没有符合条件的项目");
-    expect(wrapper.text()).toContain("3 条政策可转项目");
+    expect(wrapper.text()).toContain("共 8 个项目");
+  });
+
+  it("distinguishes an unfiltered empty ledger and allows summary-load retry", async () => {
+    route.query = {};
+    vi.mocked(getProjectSummary).mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce({ total: 0, by_status: {}, convertible_policy_count: 0 });
+    vi.mocked(getProjects).mockResolvedValue({ ...page, items: [], total: 0, page: 1 });
+    const wrapper = mount(ProjectLedgerView, { global: { plugins: [ElementPlus], stubs: { RouterLink: { template: "<a><slot /></a>" } } } });
+    await vi.dynamicImportSettled();
+
+    expect(wrapper.text()).toContain("暂无项目");
+    expect(wrapper.get("[data-retry-project-summary]").attributes("aria-label")).toBe("重试加载项目汇总");
+    await wrapper.get("[data-retry-project-summary]").trigger("click");
+    await vi.dynamicImportSettled();
+    expect(wrapper.text()).toContain("共 0 个项目");
+  });
+
+  it("closes and suppresses conversion controls at the 720px breakpoint and navigates after creation", async () => {
+    currentUser.value = { id: 1, login_name: "owner", display_name: "Owner", roles: ["applicant_owner"] };
+    const wrapper = mount(ProjectLedgerView, { global: { plugins: [ElementPlus], stubs: { RouterLink: { template: "<a><slot /></a>" }, ElDrawer: { template: "<div><slot /></div>" } } } });
+    await vi.dynamicImportSettled();
+    await wrapper.get("[data-open-project-conversion]").trigger("click");
+    expect(wrapper.findComponent(ProjectCreateDrawer).props("open")).toBe(true);
+    wrapper.findComponent(ProjectCreateDrawer).vm.$emit("created", 19);
+    await nextTick();
+    expect(push).toHaveBeenCalledWith("/projects/19");
+
+    window.innerWidth = 720;
+    window.dispatchEvent(new Event("resize"));
+    await nextTick();
+    expect(wrapper.find("[data-open-project-conversion]").exists()).toBe(false);
+    expect(wrapper.findComponent(ProjectCreateDrawer).exists()).toBe(false);
   });
 });
