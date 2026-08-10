@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 
 import {
   createEvaluation,
@@ -30,8 +30,10 @@ import PrimaryEntitySelector from "../components/evaluations/PrimaryEntitySelect
 import AttachmentList from "../components/policies/AttachmentList.vue";
 import ConclusionBadge from "../components/policies/ConclusionBadge.vue";
 import VersionHistory from "../components/policies/VersionHistory.vue";
+import ProjectCreateDrawer from "../components/projects/ProjectCreateDrawer.vue";
 
 const route = useRoute();
+const router = useRouter();
 const policy = ref<PolicyDetail | null>(null);
 const versions = ref<PolicyVersion[]>([]);
 const evaluations = ref<EvaluationBatch[]>([]);
@@ -43,6 +45,8 @@ const primaryEntity = ref<PrimaryEntityDecision | null>(null);
 const primaryEntityLoading = ref(true);
 const conclusionHistory = ref<PolicyConclusionDecision[]>([]);
 const conclusionDecisionOpen = ref(false);
+const conversionOpen = ref(false);
+const mobile = ref(false);
 const confirmRetryOpen = ref(false);
 const retrying = ref(false);
 const cancelOpen = ref(false);
@@ -54,6 +58,7 @@ const confirmCancelButton = ref<HTMLButtonElement | null>(null);
 const retryButton = ref<HTMLButtonElement | null>(null);
 const retryDialog = ref<HTMLElement | null>(null);
 const confirmRetryButton = ref<HTMLButtonElement | null>(null);
+let mobileQuery: MediaQueryList | null = null;
 const currentEvaluation = computed(() => evaluations.value[0] ?? null);
 const historicalEvaluations = computed(() => evaluations.value.slice(1));
 const attemptNumberById = computed<Record<number, number>>(() => Object.fromEntries(
@@ -64,6 +69,11 @@ const attemptNumberById = computed<Record<number, number>>(() => Object.fromEntr
 const canRetry = computed(
   () => currentUser.value?.roles.includes("applicant_owner") ?? false,
 );
+const canConvertPolicy = computed(() => canRetry.value
+  && policy.value?.conclusion_confirmed === true
+  && policy.value.current_conclusion === "recommend_apply"
+  && !policy.value.converted_to_project
+  && primaryEntity.value !== null);
 const canRetryCurrent = computed(
   () => canRetry.value
     && currentEvaluation.value !== null
@@ -89,6 +99,14 @@ const isEvaluationActive = computed(
 );
 function formatDate(value: string | null) { return value ?? "未注明"; }
 function formatTime(value: string) { return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
+function updateMobile(): void {
+  mobile.value = mobileQuery?.matches ?? window.innerWidth <= 720;
+  if (mobile.value) conversionOpen.value = false;
+}
+async function projectCreated(projectId: number): Promise<void> {
+  conversionOpen.value = false;
+  await router.push(`/projects/${projectId}`);
+}
 
 async function refreshEvaluations(id: number): Promise<boolean> {
   try {
@@ -255,6 +273,11 @@ useEvaluationPolling(
 );
 
 onMounted(async () => {
+  if (typeof window.matchMedia === "function") {
+    mobileQuery = window.matchMedia("(max-width: 720px)");
+    mobileQuery.addEventListener("change", updateMobile);
+  }
+  updateMobile();
   const id = Number(route.params.id);
   try {
     [policy.value, versions.value] = await Promise.all([getPolicy(id), getPolicyVersions(id)]);
@@ -265,6 +288,7 @@ onMounted(async () => {
   catch { error.value = "无法加载政策详情。请返回政策中心后重试。"; }
   finally { loading.value = false; }
 });
+onBeforeUnmount(() => mobileQuery?.removeEventListener("change", updateMobile));
 </script>
 
 <template>
@@ -275,6 +299,14 @@ onMounted(async () => {
       <div><p class="eyebrow">政策档案 · 当前版本 {{ policy.current_version.version_number }}</p><h1>{{ policy.title }}</h1><p v-if="policy.document_number">{{ policy.document_number }}</p></div>
       <ConclusionBadge :conclusion="policy.current_conclusion" :confirmed="policy.conclusion_confirmed" />
     </header>
+    <section class="project-lifecycle" aria-label="项目状态">
+      <RouterLink v-if="policy.converted_to_project && policy.project_id" :to="`/projects/${policy.project_id}`">
+        已转项目：{{ policy.project_name ?? `项目 #${policy.project_id}` }}
+      </RouterLink>
+      <button v-else-if="canConvertPolicy && !mobile" type="button" data-open-project-conversion @click="conversionOpen = true">
+        转为项目
+      </button>
+    </section>
     <section v-if="policy.conclusion_confirmed && confirmedConclusion" data-conclusion-metadata class="conclusion-metadata" aria-label="当前政策结论">
       <dl>
         <div><dt>当前结论：</dt><dd>{{ conclusionLabels[confirmedConclusion] }}</dd></div>
@@ -353,6 +385,7 @@ onMounted(async () => {
       </div>
     </section>
     <VersionHistory :versions="versions" />
+    <ProjectCreateDrawer v-if="canConvertPolicy && !mobile && conversionOpen" :open="conversionOpen" @close="conversionOpen = false" @created="projectCreated" />
 
     <div v-if="confirmRetryOpen" class="dialog-backdrop" @click.self="dismissRetryDialog">
       <section ref="retryDialog" role="dialog" aria-modal="true" :aria-busy="retrying" aria-labelledby="retry-dialog-title" class="confirm-dialog" tabindex="-1" @keydown="handleDialogKeydown">
@@ -384,4 +417,5 @@ onMounted(async () => {
 <style scoped>
 .policy-detail { max-width: 68rem; margin: 0 auto; color: #1b3352; }.policy-title { display: flex; align-items: start; justify-content: space-between; gap: 2rem; padding-bottom: 1.35rem; border-bottom: 3px solid #1e568c; }.eyebrow { margin: 0 0 .45rem; color: #6a7e95; font-size: .75rem; font-weight: 800; letter-spacing: .09em; }.policy-title h1 { max-width: 48rem; margin: 0; font: 700 clamp(1.8rem, 4vw, 2.65rem)/1.25 "Noto Serif SC", "Songti SC", serif; }.policy-title p:last-child { color: #60758d; }.facts, .document, .files, .evaluation-panel { margin-top: 1.5rem; padding: 1.2rem 1.35rem; border: 1px solid #d8e2ec; background: #fff; }.facts dl { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin: 0 0 1rem; }.facts dl div { padding-left: .75rem; border-left: 3px solid #d3a747; }.facts dt { color: #6a7e95; font-size: .75rem; }.facts dd { margin: .3rem 0 0; font-weight: 700; }.facts ul { margin: 0; padding: 0; list-style: none; }.facts li { display: flex; justify-content: space-between; gap: 1rem; padding-top: .8rem; border-top: 1px solid #e3ebf3; }.facts a, .snapshot { color: #14558c; }.document h2, .files > h2, .task-state h2 { margin-top: 0; font: 700 1.2rem/1.4 "Noto Serif SC", "Songti SC", serif; }.body-text { color: #293f58; line-height: 1.9; white-space: pre-wrap; }.task-state { display: flex; align-items: start; gap: .9rem; color: #536b82; }.task-state h2 { margin-bottom: .25rem; }.task-state p { margin: 0; }.state-marker { width: .7rem; height: .7rem; margin-top: .35rem; border: 2px solid #49769a; border-radius: 50%; box-shadow: 0 0 0 4px #e8f0f6; }.failed .state-marker { border-color: #a95345; box-shadow: 0 0 0 4px #faece9; }.evaluation-actions { display: flex; justify-content: flex-end; margin-top: 1rem; }.evaluation-actions button, .confirm-dialog button { padding: .58rem .9rem; color: #fff; border: 1px solid #174f7e; background: #174f7e; font: inherit; font-size: .82rem; font-weight: 800; cursor: pointer; }.evaluation-error, .error { padding: 1rem; color: #9b1c1c; background: #fff1f0; }.dialog-backdrop { position: fixed; z-index: 20; inset: 0; display: grid; place-items: center; padding: 1rem; background: rgb(15 33 50 / 48%); }.confirm-dialog { width: min(28rem, 100%); margin: 0; padding: 1.35rem; border: 0; background: #fff; box-shadow: 0 1.5rem 4rem rgb(8 27 45 / 30%); }.confirm-dialog h2 { margin: 0; font: 700 1.35rem/1.35 "Noto Serif SC", "Songti SC", serif; }.confirm-dialog > p:not(.eyebrow) { color: #536b82; line-height: 1.65; }.confirm-dialog > div { display: flex; justify-content: flex-end; gap: .6rem; margin-top: 1.25rem; }.confirm-dialog button.secondary { color: #315671; border-color: #bdcad5; background: #fff; }.confirm-dialog button:disabled { cursor: wait; opacity: .65; }@media (max-width: 700px) { .policy-title { flex-direction: column; }.facts dl { grid-template-columns: 1fr; }.facts li { align-items: start; flex-direction: column; } }
 .conclusion-metadata{margin-top:1rem;padding:1rem 1.35rem;border-left:4px solid #174f7e;background:#eef5fa}.conclusion-metadata dl{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin:0}.conclusion-metadata dt{color:#60758d;font-size:.75rem}.conclusion-metadata dd{margin:.25rem 0 0;font-weight:800}.conclusion-metadata>button{margin-top:1rem;padding:.55rem .85rem;color:#174f7e;border:1px solid #174f7e;background:#fff;font:inherit;font-weight:800}@media(max-width:700px){.conclusion-metadata dl{grid-template-columns:1fr}}
+.project-lifecycle{display:flex;justify-content:flex-end;min-height:1.5rem;margin-top:.75rem}.project-lifecycle a,.project-lifecycle button{color:#174f7e;font:inherit;font-size:.86rem;font-weight:800;text-decoration:underline;text-underline-offset:3px}.project-lifecycle button{padding:.15rem 0;border:0;background:transparent;cursor:pointer}.project-lifecycle button:focus-visible,.project-lifecycle a:focus-visible{outline:3px solid #e3b260;outline-offset:3px}@media(max-width:720px){.project-lifecycle{justify-content:flex-start}}
 </style>

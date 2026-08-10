@@ -20,7 +20,11 @@ import {
 import { currentUser } from "../../src/auth/state";
 import PolicyDetailView from "../../src/views/PolicyDetailView.vue";
 
-vi.mock("vue-router", () => ({ useRoute: () => ({ params: { id: "8" } }) }));
+vi.mock("vue-router", () => ({
+  useRoute: () => ({ params: { id: "8" } }),
+  useRouter: () => ({ push: vi.fn() }),
+  RouterLink: { props: ["to"], template: "<a :href=\"to\"><slot /></a>" },
+}));
 vi.mock("../../src/api/policies", () => ({
   getPolicy: vi.fn(),
   getPolicyVersions: vi.fn(),

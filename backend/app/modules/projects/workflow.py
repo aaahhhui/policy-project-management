@@ -23,7 +23,7 @@ RESULT_STATUSES = frozenset({"succeeded", "rejected"})
 
 @dataclass(frozen=True)
 class WorkflowResult:
-    new_status: str
+    new_status: ProjectStatus
     values: dict[str, object | None]
     related_date: date | None
 
@@ -87,11 +87,10 @@ def apply_transition(
         )
 
     if payload.target_status in RESULT_STATUSES:
+        submitted_value = current_values.get("submitted_on")
         result_on = _validate_result_on(
             payload.result_on,
-            submitted_on=current_values.get("submitted_on")
-            if isinstance(current_values.get("submitted_on"), date)
-            else None,
+            submitted_on=submitted_value if isinstance(submitted_value, date) else None,
             today=today,
             error=ProjectTransitionInvalid,
         )
@@ -144,11 +143,10 @@ def apply_correction(
     if payload.target_status not in RESULT_STATUSES or payload.target_status == current_status:
         raise ProjectCorrectionInvalid()
 
+    submitted_value = current_values.get("submitted_on")
     result_on = _validate_result_on(
         payload.result_on,
-        submitted_on=current_values.get("submitted_on")
-        if isinstance(current_values.get("submitted_on"), date)
-        else None,
+        submitted_on=submitted_value if isinstance(submitted_value, date) else None,
         today=today,
         error=ProjectCorrectionInvalid,
     )

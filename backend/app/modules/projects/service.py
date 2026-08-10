@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, date, datetime
+from typing import cast
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -30,6 +31,7 @@ from app.modules.projects.schemas import (
     ConvertiblePolicyPage,
     ProjectCreateInput,
     ProjectCapabilitiesResponse,
+    ProjectConversionWarning,
     ProjectDates,
     ProjectDetail,
     ProjectEntitySnapshot,
@@ -42,6 +44,7 @@ from app.modules.projects.schemas import (
     ProjectPolicySnapshot,
     ProjectStatusHistoryDetail,
     ProjectSummary,
+    ProjectStatus,
     ProjectPrimaryEntityCorrectionInput,
     ProjectCorrectionInput,
     ProjectTransitionInput,
@@ -234,7 +237,7 @@ class ProjectService:
         if connection.dialect.name != "sqlite":
             return
         raw_connection = connection.connection.driver_connection
-        if not raw_connection.in_transaction:
+        if raw_connection is not None and not raw_connection.in_transaction:
             connection.exec_driver_sql("BEGIN")
 
     def _resolve_creation_race(
@@ -309,6 +312,8 @@ class ProjectService:
                 raise ProjectWriteForbidden()
 
         policy = self.db.scalar(select(Policy).where(Policy.id == project.policy_id).with_for_update())
+        if policy is None:
+            raise LookupError("policy not found")
         current = self.db.scalar(
             select(PrimaryEntityDecision)
             .where(PrimaryEntityDecision.current_policy_id == policy.id)
@@ -360,7 +365,7 @@ class ProjectService:
                 raise ProjectWriteForbidden()
 
         result = apply_transition(
-            current_status=project.status,
+            current_status=cast(ProjectStatus, project.status),
             current_values=self._status_values(project),
             payload=payload,
             today=date.today(),
@@ -384,7 +389,7 @@ class ProjectService:
                 raise ProjectWriteForbidden()
 
         result = apply_correction(
-            current_status=project.status,
+            current_status=cast(ProjectStatus, project.status),
             current_values=self._status_values(project),
             pre_termination_status=self._pre_termination_status(project.id),
             payload=payload,
@@ -398,8 +403,10 @@ class ProjectService:
             reason=payload.reason,
         )
 
-    def _pre_termination_status(self, project_id: int) -> str | None:
-        return self.db.scalar(
+    def _pre_termination_status(self, project_id: int) -> ProjectStatus | None:
+        return cast(
+            ProjectStatus | None,
+            self.db.scalar(
             select(ProjectStatusHistory.previous_status)
             .where(
                 ProjectStatusHistory.project_id == project_id,
@@ -407,6 +414,7 @@ class ProjectService:
             )
             .order_by(ProjectStatusHistory.occurred_at.desc(), ProjectStatusHistory.id.desc())
             .limit(1)
+            ),
         )
 
     @staticmethod
@@ -580,11 +588,12 @@ class ProjectQueryService:
         from app.modules.projects.models import PROJECT_STATUSES
 
         total = self.db.scalar(select(func.count()).select_from(Project)) or 0
-        counts = dict(
-            self.db.execute(
+        counts: dict[str, int] = {
+            status: count
+            for status, count in self.db.execute(
                 select(Project.status, func.count()).group_by(Project.status)
-            ).all()
-        )
+            )
+        }
         return ProjectSummary(
             total=total,
             by_status={status: counts.get(status, 0) for status in PROJECT_STATUSES},
@@ -656,7 +665,7 @@ class ProjectQueryService:
             applicant_owner_display_name=project.applicant_owner_display_name,
             liaison_user_id=project.liaison_user_id,
             liaison_display_name=project.liaison_display_name,
-            status=project.status,
+            status=cast(ProjectStatus, project.status),
             deadline_on=project.deadline_on,
             submitted_on=project.submitted_on,
             result_on=project.result_on,
@@ -707,8 +716,8 @@ class ProjectQueryService:
                 ProjectStatusHistoryDetail(
                     id=entry.id,
                     action=entry.action,
-                    previous_status=entry.previous_status,
-                    new_status=entry.new_status,
+                    previous_status=cast(ProjectStatus | None, entry.previous_status),
+                    new_status=cast(ProjectStatus, entry.new_status),
                     actor=ProjectPerson(
                         id=entry.actor_id, display_name=entry.actor_display_name
                     ),
@@ -809,7 +818,7 @@ class ProjectQueryService:
                 display_name=project.applicant_owner_display_name,
             ),
             liaison=ProjectPerson(id=project.liaison_user_id, display_name=project.liaison_display_name),
-            status=project.status,
+            status=cast(ProjectStatus, project.status),
             deadline_on=project.deadline_on,
             updated_at=project.updated_at,
             version=project.version,
@@ -817,7 +826,7 @@ class ProjectQueryService:
         )
 
     @staticmethod
-    def _preview_warnings(deadline_on: date | None) -> list[str]:
+    def _preview_warnings(deadline_on: date | None) -> list[ProjectConversionWarning]:
         if deadline_on is None:
             return ["deadline_unknown"]
         if deadline_on < date.today():
@@ -825,7 +834,7 @@ class ProjectQueryService:
         return []
 
     @staticmethod
-    def _project_warnings(project: Project) -> list[str]:
+    def _project_warnings(project: Project) -> list[ProjectConversionWarning]:
         if project.deadline_on is None:
             return ["deadline_unknown"]
         if project.deadline_on < project.created_at.date():

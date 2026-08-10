@@ -1,5 +1,5 @@
 from datetime import date
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -113,7 +113,7 @@ def list_projects(
             deadline_to=deadline_to,
             mine=mine,
             page=page,
-            page_size=int(page_size),
+            page_size=cast(Literal[10, 20, 50], int(page_size)),
         ),
         actor=actor,
     )
