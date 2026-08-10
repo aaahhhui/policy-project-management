@@ -123,6 +123,19 @@ def test_owner_updates_termination_note_only_for_terminated_project(db) -> None:
     assert detail.version == 2
 
 
+def test_current_liaison_updates_termination_note_for_terminated_project(db) -> None:
+    _owner, liaison, _policy, project = _project(db, status="terminated")
+
+    detail = ProjectService(db).update_project(
+        project.id,
+        ProjectUpdateInput(expected_version=1, termination_note="Liaison termination note"),
+        liaison,
+    )
+
+    assert detail.termination_note == "Liaison termination note"
+    assert detail.version == 2
+
+
 @pytest.mark.parametrize(
     ("status", "payload"),
     [
