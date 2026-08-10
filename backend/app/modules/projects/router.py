@@ -23,6 +23,8 @@ from app.modules.projects.schemas import (
     ProjectSummary,
     ProjectUserOption,
     ProjectPrimaryEntityCorrectionInput,
+    ProjectCorrectionInput,
+    ProjectTransitionInput,
     ProjectUpdateInput,
     ConvertiblePolicyPage,
 )
@@ -215,6 +217,54 @@ def correct_primary_entity(
                 actor_id=actor.id,
                 project_id=project_id,
                 attempted_action="correct_primary_entity",
+            )
+        else:
+            db.rollback()
+        raise _project_error_response(error) from None
+
+
+@router.post("/api/projects/{project_id}/transitions", response_model=ProjectDetail)
+def transition_project(
+    project_id: int,
+    payload: ProjectTransitionInput,
+    actor: Owner,
+    db: Session = Depends(get_db),
+) -> ProjectDetail:
+    try:
+        result = ProjectService(db).transition(project_id, payload, actor)
+        db.commit()
+        return result
+    except LookupError as error:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found") from error
+    except ProjectError as error:
+        if error.code == "project_write_forbidden":
+            _commit_denied_write_audit(
+                db, actor_id=actor.id, project_id=project_id, attempted_action="transition"
+            )
+        else:
+            db.rollback()
+        raise _project_error_response(error) from None
+
+
+@router.post("/api/projects/{project_id}/corrections", response_model=ProjectDetail)
+def correct_project_status(
+    project_id: int,
+    payload: ProjectCorrectionInput,
+    actor: Owner,
+    db: Session = Depends(get_db),
+) -> ProjectDetail:
+    try:
+        result = ProjectService(db).correct_status(project_id, payload, actor)
+        db.commit()
+        return result
+    except LookupError as error:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found") from error
+    except ProjectError as error:
+        if error.code == "project_write_forbidden":
+            _commit_denied_write_audit(
+                db, actor_id=actor.id, project_id=project_id, attempted_action="correction"
             )
         else:
             db.rollback()

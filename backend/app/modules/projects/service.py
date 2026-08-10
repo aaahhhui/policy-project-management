@@ -43,9 +43,12 @@ from app.modules.projects.schemas import (
     ProjectStatusHistoryDetail,
     ProjectSummary,
     ProjectPrimaryEntityCorrectionInput,
+    ProjectCorrectionInput,
+    ProjectTransitionInput,
     ProjectUpdateInput,
     ProjectUserOption,
 )
+from app.modules.projects.workflow import apply_correction, apply_transition
 
 
 def _creation_fingerprint(
@@ -345,6 +348,132 @@ class ProjectService:
             },
         )
         return ProjectQueryService(self.db).detail(project.id, actor=actor)
+
+    def transition(
+        self, project_id: int, payload: ProjectTransitionInput, actor: User
+    ) -> ProjectDetail:
+        with self.db.no_autoflush:
+            project = self._locked_project(project_id)
+            if project.version != payload.expected_version:
+                raise ProjectVersionConflict(current_version=project.version)
+            if not capabilities_for(actor=actor, project=project).can_transition:
+                raise ProjectWriteForbidden()
+
+        result = apply_transition(
+            current_status=project.status,
+            current_values=self._status_values(project),
+            payload=payload,
+            today=date.today(),
+        )
+        return self._persist_status_change(
+            project=project,
+            actor=actor,
+            result=result,
+            correction=False,
+            reason=None,
+        )
+
+    def correct_status(
+        self, project_id: int, payload: ProjectCorrectionInput, actor: User
+    ) -> ProjectDetail:
+        with self.db.no_autoflush:
+            project = self._locked_project(project_id)
+            if project.version != payload.expected_version:
+                raise ProjectVersionConflict(current_version=project.version)
+            if not capabilities_for(actor=actor, project=project).can_correct_status:
+                raise ProjectWriteForbidden()
+
+        result = apply_correction(
+            current_status=project.status,
+            current_values=self._status_values(project),
+            pre_termination_status=self._pre_termination_status(project.id),
+            payload=payload,
+            today=date.today(),
+        )
+        return self._persist_status_change(
+            project=project,
+            actor=actor,
+            result=result,
+            correction=True,
+            reason=payload.reason,
+        )
+
+    def _pre_termination_status(self, project_id: int) -> str | None:
+        return self.db.scalar(
+            select(ProjectStatusHistory.previous_status)
+            .where(
+                ProjectStatusHistory.project_id == project_id,
+                ProjectStatusHistory.new_status == "terminated",
+            )
+            .order_by(ProjectStatusHistory.occurred_at.desc(), ProjectStatusHistory.id.desc())
+            .limit(1)
+        )
+
+    @staticmethod
+    def _status_values(project: Project) -> dict[str, object | None]:
+        return {
+            "submitted_on": project.submitted_on,
+            "result_on": project.result_on,
+            "result_note": project.result_note,
+            "termination_note": project.termination_note,
+        }
+
+    def _persist_status_change(
+        self,
+        *,
+        project: Project,
+        actor: User,
+        result,
+        correction: bool,
+        reason: str | None,
+    ) -> ProjectDetail:
+        old_status = project.status
+        old_version = project.version
+        before_values = self._status_audit_values(project, status=old_status)
+        project.status = result.new_status
+        for field, value in result.values.items():
+            setattr(project, field, value)
+        project.version += 1
+        after_values = self._status_audit_values(project, status=project.status)
+        now = datetime.now(UTC)
+        self.db.add(
+            ProjectStatusHistory(
+                project_id=project.id,
+                action="corrected" if correction else "transitioned",
+                previous_status=old_status,
+                new_status=project.status,
+                actor_id=actor.id,
+                actor_display_name=actor.display_name,
+                reason=reason,
+                related_date=result.related_date,
+                before_values=before_values,
+                after_values=after_values,
+                from_version=old_version,
+                to_version=project.version,
+                occurred_at=now,
+            )
+        )
+        self.db.flush()
+        AuditService(self.db).record(
+            "project_status_corrected" if correction else "project_status_changed",
+            actor.id,
+            "project",
+            project.id,
+            reason=reason,
+            changes={"before": before_values, "after": after_values},
+        )
+        return ProjectQueryService(self.db).detail(project.id, actor=actor)
+
+    @staticmethod
+    def _status_audit_values(project: Project, *, status: str) -> dict[str, object | None]:
+        values = ProjectService._status_values(project)
+        return {
+            "status": status,
+            **{
+                field: value.isoformat() if isinstance(value, date) else value
+                for field, value in values.items()
+            },
+        }
 
     def _locked_project(self, project_id: int) -> Project:
         project = self.db.scalar(select(Project).where(Project.id == project_id).with_for_update())

@@ -62,3 +62,20 @@ def test_denied_write_does_not_flush_or_commit_unrelated_pending_state(
             select(AuditEvent).where(AuditEvent.action == "project_write_denied")
         )
     assert denied_event is not None
+
+
+def test_denied_status_write_records_only_the_attempted_action(client, db, seeded_owner) -> None:
+    reader = User(login_name="status-audit-reader", display_name="Reader", password_hash=hash_password("reader-password"), is_active=True)
+    liaison = User(login_name="status-audit-liaison", display_name="Liaison", password_hash=hash_password("liaison-password"), is_active=True)
+    db.add_all([reader, liaison])
+    db.flush()
+    policy, primary = create_confirmed_recommend_policy(db, owner=seeded_owner)
+    project = create_project(db, policy=policy, primary=primary, owner=seeded_owner, liaison=liaison)
+    db.commit()
+    assert client.post("/api/auth/login", json={"login_name": "status-audit-reader", "password": "reader-password"}).status_code == 204
+
+    denied = client.post(f"/api/projects/{project.id}/transitions", json={"expected_version": 1, "target_status": "submitted", "submitted_on": "2026-08-01"})
+
+    assert denied.status_code == 403
+    event = db.scalar(select(AuditEvent).where(AuditEvent.action == "project_write_denied"))
+    assert event is not None and event.changes == {"attempted_action": "transition", "code": "project_write_forbidden"}
