@@ -55,7 +55,7 @@ describe("ProjectLedgerView", () => {
 
   it("renders loading, error and empty states without losing the summary", async () => {
     vi.mocked(getProjects).mockRejectedValueOnce(new Error("offline"));
-    const wrapper = mount(ProjectLedgerView, { global: { plugins: [ElementPlus] } });
+    const wrapper = mount(ProjectLedgerView, { global: { plugins: [ElementPlus], stubs: { RouterLink: { template: "<a><slot /></a>" } } } });
     await vi.dynamicImportSettled();
     expect(wrapper.get("[role='alert']").text()).toContain("无法加载项目台账");
 

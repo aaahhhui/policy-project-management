@@ -1,10 +1,8 @@
 import { mount } from "@vue/test-utils";
 import { describe, expect, it } from "vitest";
 
-import ProjectFilters, {
-  filtersFromQuery,
-  filtersToQuery,
-} from "../../src/components/projects/ProjectFilters.vue";
+import ProjectFilters from "../../src/components/projects/ProjectFilters.vue";
+import { filtersFromQuery, filtersToQuery } from "../../src/components/projects/projectFilters";
 
 describe("ProjectFilters", () => {
   it("hydrates supported URL values and removes empty/default values when applying", async () => {
@@ -33,7 +31,7 @@ describe("ProjectFilters", () => {
 
   it("restricts page sizes and resets to the first page when a filter changes", async () => {
     const wrapper = mount(ProjectFilters, {
-      props: { filters: { ...filtersFromQuery({ page: "4", page_size: "10" }) } },
+      props: { filters: { ...filtersFromQuery({ page: "4", page_size: "30" }) } },
     });
 
     expect((wrapper.get("select[aria-label='每页项目数']").element as HTMLSelectElement).value).toBe("20");

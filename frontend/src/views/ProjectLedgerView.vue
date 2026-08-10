@@ -5,7 +5,8 @@ import { useRouter, useRoute } from "vue-router";
 import { getProjectSummary, getProjects, type ProjectListItem, type ProjectSummary } from "../api/projects";
 import { currentUser } from "../auth/state";
 import ProjectCreateDrawer from "../components/projects/ProjectCreateDrawer.vue";
-import ProjectFilters, { filtersFromQuery, filtersToQuery, type ProjectLedgerFilters } from "../components/projects/ProjectFilters.vue";
+import ProjectFilters from "../components/projects/ProjectFilters.vue";
+import { filtersFromQuery, filtersToQuery, type ProjectLedgerFilters } from "../components/projects/projectFilters";
 
 const route = useRoute();
 const router = useRouter();
@@ -30,7 +31,7 @@ async function loadProjects(): Promise<void> {
   loading.value = true; error.value = "";
   try {
     const page = await getProjects(apiFilters(filters.value));
-    if (generation === requestGeneration) { projects.value = page.items; total.value = page.total; filters.value.page = page.page; filters.value.page_size = page.page_size; }
+    if (generation === requestGeneration) { projects.value = page.items; total.value = page.total; filters.value.page = page.page; filters.value.page_size = [10, 20, 50].includes(page.page_size) ? page.page_size as 10 | 20 | 50 : 20; }
   } catch {
     if (generation === requestGeneration) error.value = "无法加载项目台账，请检查网络后重试。";
   } finally { if (generation === requestGeneration) loading.value = false; }

@@ -26,7 +26,7 @@ const isOwner = computed(() => currentUser.value?.roles.includes("applicant_owne
 const selectedPolicy = computed(() => policies.value.find((policy) => policy.id === draft.policy_id) ?? null);
 const canSubmit = computed(() => isOwner.value && selectedPolicy.value !== null && Number(draft.liaison_user_id) > 0 && !saving.value);
 
-export function createConversionKey(): string {
+function createConversionKey(): string {
   const generated = globalThis.crypto?.randomUUID?.();
   return generated ?? `project-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
