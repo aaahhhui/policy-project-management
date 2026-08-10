@@ -385,7 +385,7 @@ onBeforeUnmount(() => mobileQuery?.removeEventListener("change", updateMobile));
       </div>
     </section>
     <VersionHistory :versions="versions" />
-    <ProjectCreateDrawer v-if="canConvertPolicy && !mobile && conversionOpen" :open="conversionOpen" @close="conversionOpen = false" @created="projectCreated" />
+    <ProjectCreateDrawer v-if="canConvertPolicy && !mobile && conversionOpen" :open="conversionOpen" :policy-id="policy.id" @close="conversionOpen = false" @created="projectCreated" />
 
     <div v-if="confirmRetryOpen" class="dialog-backdrop" @click.self="dismissRetryDialog">
       <section ref="retryDialog" role="dialog" aria-modal="true" :aria-busy="retrying" aria-labelledby="retry-dialog-title" class="confirm-dialog" tabindex="-1" @keydown="handleDialogKeydown">

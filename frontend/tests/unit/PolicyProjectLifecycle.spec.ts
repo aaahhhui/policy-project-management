@@ -118,6 +118,7 @@ describe("PolicyDetailView project lifecycle", () => {
     await action.trigger("click");
     await flushPromises();
     expect(wrapper.findComponent(ProjectCreateDrawer).props("open")).toBe(true);
+    expect(wrapper.findComponent(ProjectCreateDrawer).props("policyId")).toBe(8);
 
     wrapper.findComponent(ProjectCreateDrawer).vm.$emit("created", 19);
     await nextTick();

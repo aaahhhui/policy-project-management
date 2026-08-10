@@ -96,6 +96,42 @@ describe("ProjectCreateDrawer", () => {
     expect(wrapper.text()).toContain("第二页政策");
   });
 
+  it("submits the policy fixed by a detail view even when it is not on the first page", async () => {
+    vi.mocked(getConvertiblePolicies).mockImplementation(async (page) => page === 1
+      ? {
+          items: [{ id: 7, title: "Policy B", primary_entity_decision_id: 11, primary_entity_seed_code: "E-1", primary_entity_legal_name: "Entity B", deadline_on: null, conversion_warnings: [] }],
+          page: 1,
+          page_size: 20,
+          total: 21,
+        }
+      : {
+          items: [{ id: 8, title: "Policy A", primary_entity_decision_id: 12, primary_entity_seed_code: "E-2", primary_entity_legal_name: "Entity A", deadline_on: "2026-12-31", conversion_warnings: [] }],
+          page: 2,
+          page_size: 20,
+          total: 21,
+        });
+    const wrapper = mount(ProjectCreateDrawer, {
+      props: { open: true, policyId: 8, keyGenerator: () => "fixed-policy-key" },
+      global: { plugins: [ElementPlus], stubs: { ElDrawer: { template: "<div><slot name='header' /><slot /></div>" } } },
+    });
+    await vi.dynamicImportSettled();
+
+    expect(getConvertiblePolicies).toHaveBeenNthCalledWith(1, 1, 20);
+    expect(getConvertiblePolicies).toHaveBeenNthCalledWith(2, 2, 20);
+    expect((wrapper.get("select[aria-label='可转换政策']").element as HTMLSelectElement).value).toBe("8");
+    expect(wrapper.get("select[aria-label='可转换政策']").attributes("disabled")).toBeDefined();
+
+    await wrapper.get("select[aria-label='项目对接人']").setValue("4");
+    await wrapper.get("form").trigger("submit");
+    await vi.dynamicImportSettled();
+
+    expect(createProjectFromPolicy).toHaveBeenCalledWith(
+      8,
+      expect.objectContaining({ name: "Policy A", liaison_user_id: 4 }),
+      "fixed-policy-key",
+    );
+  });
+
   it("shows the non-blocking unknown-deadline warning", async () => {
     vi.mocked(getConvertiblePolicies).mockResolvedValueOnce({
       items: [{ id: 7, title: "未知截止政策", primary_entity_decision_id: 11, primary_entity_seed_code: "E-1", primary_entity_legal_name: "示例企业", deadline_on: null, conversion_warnings: ["deadline_unknown"] }], page: 1, page_size: 20, total: 1,

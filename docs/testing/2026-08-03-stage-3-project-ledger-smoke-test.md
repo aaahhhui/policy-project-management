@@ -1,13 +1,16 @@
 # Stage 3 project-ledger acceptance record
 
-Date: 2026-08-10 (Asia/Shanghai)  
-Branch: `codex/stage3-policy-project-ledger`  
-Acceptance base commit: `466e12facbc62e2fde19ccce7d75c974ac4c0602`  
+Date: 2026-08-10 (Asia/Shanghai)
+
+Branch: `codex/stage3-policy-project-ledger`
+
+Acceptance base commit: `466e12facbc62e2fde19ccce7d75c974ac4c0602`
+
 Intended isolated Compose project: `stage3-ledger-verify` on host port `8082`
 
 ## Decision
 
-**Release gate: BLOCKED in this environment.** The implementation, local automated suites, type checks, build, SQLite migration round trip, and desktop/mobile fallback smoke passed. The required Docker Compose/MySQL 8.4 health, migration, and concurrency commands could not run because the `docker` executable is not installed or available on `PATH`. This record does not substitute SQLite evidence for the required MySQL release gate.
+**Release gate: BLOCKED in this environment.** The implementation, local automated suites, type checks, build, SQLite migration round trip, and limited fallback browser observations completed. The required desktop permission smoke was not completed, and the required Docker Compose/MySQL 8.4 health, migration, and concurrency commands could not run because the `docker` executable is not installed or available on `PATH`. This record does not substitute SQLite evidence for the required MySQL release gate.
 
 ## Automated verification
 
@@ -18,7 +21,7 @@ Intended isolated Compose project: `stage3-ledger-verify` on host port `8082`
 | MySQL concurrency contract | NOT RUN | The test is collected and skips unless `RUN_STAGE3_MYSQL_CONCURRENCY=1`; Docker/MySQL was unavailable. |
 | Ruff | PASS | `ruff check .` returned `All checks passed!`. |
 | mypy | PASS | `Success: no issues found in 81 source files`. |
-| Frontend full suite | PASS | `29 passed` test files, `131 passed` tests. |
+| Frontend full suite | PASS | `29 passed` test files, `132 passed` tests after fix round 1. |
 | Vue TypeScript | PASS | `vue-tsc -b --noEmit` exited 0. |
 | Production frontend build | PASS | Vite exited 0. |
 
@@ -37,19 +40,21 @@ The opt-in MySQL test asserts the actual `projects.policy_id` unique constraint,
 
 ## Desktop and mobile permission smoke
 
-The browser smoke used disposable SQLite data and test-only local accounts; no credentials are recorded here.
+The limited browser run used disposable SQLite data and test-only local accounts; no credentials are recorded here. It is not a passing result for the required desktop smoke. Automated API evidence is identified separately and does not replace browser execution.
 
-| Scenario | Result | Observation |
+| Required scenario | Result | Evidence and gap |
 | --- | --- | --- |
-| Owner ledger navigation and summary | PASS | Project navigation, `1 条政策可转项目`, summary counts, filters, and the project table rendered; no status legend/prompt block was present. Pagination controls were not rendered for the single-row fixture. |
-| Eligible policy conversion entry | PASS | Owner saw `转为项目`; the shared drawer opened and displayed the non-blocking expired-deadline warning. Creation was not submitted in this fallback smoke, because HTTP automation already proves one-project idempotency. |
-| Converted policy lifecycle | PASS | Confirmed `建议申报` remained visible independently of `已转项目：Stage 3 smoke project`, which linked to `/projects/1`; no second conversion control appeared. |
-| Owner project maintenance | PASS | Desktop detail showed owner-only name, deadline, liaison, members, status, and primary-entity correction controls. |
-| Assigned liaison boundary | PASS | Desktop detail showed dates/notes and normal transition controls but did not show owner-only name/deadline/liaison/member/primary-entity controls. |
-| Reader policy boundary | PASS | Reader could read the policy, confirmed conclusion, and history but had no conversion or conclusion mutation control. |
-| Mobile read-only project view | PASS | At 390x844, project facts and change history remained visible while maintenance, transition, and correction controls were absent for both owner and liaison sessions. |
-| Mobile conversion boundary | PASS | At 390x844, eligible policy content and conclusion remained visible while `转为项目` was absent. |
-| Unrelated/member direct-write rejection | PASS (automated API) | The authenticated vertical-flow test returns 403 for a member/reader, an unrelated user, and a former liaison; the newly assigned liaison can write immediately. A separate unrelated browser fixture was not created. |
+| 1. Owner navigation, summary, convertible count, filters, pagination, and no legend/prompt | NOT RUN | Navigation, summary, `1 条政策可转项目`, filters, table, and absence of the legend/prompt were observed. Pagination could not be exercised with the single-row fixture, so the required scenario is incomplete. |
+| 2. Owner warning, conversion submission, and double-click/retry uniqueness | NOT RUN | The drawer and expired-deadline warning were observed, but browser creation and double-click/retry were not executed. Idempotency passed separately through authenticated HTTP automation. |
+| 3. Owner assignment, owner-only edits, and liaison change | NOT RUN | Owner-only controls rendered, but the browser did not submit assignment, edits, or reassignment. |
+| 4. Liaison updates, transitions, and result correction | NOT RUN | Assigned-liaison controls rendered, but the browser did not submit updates, transitions, or correction. These flows passed separately through authenticated HTTP automation. |
+| 5. Liaison field boundary and unrelated direct mutation rejection | NOT RUN | The liaison UI omitted owner-only fields. An unrelated browser account/direct request was not exercised; separate HTTP automation asserted 403 responses. |
+| 6. Member and unrelated list/detail/history reads | NOT RUN | No dedicated member and unrelated browser sessions were exercised. |
+| 7. Owner primary-entity correction and visible audit | NOT RUN | The correction control rendered, but no browser correction was submitted and no resulting audit entry was inspected. |
+| 8. Mobile reading with conversion/edit/transition/correction controls hidden | PASS (SQLite fallback) | At 390x844, policy/project facts and history remained visible while project conversion and mutation controls were absent for owner and assigned-liaison sessions. |
+| 9. Policy conclusion plus independent converted-project link | PASS (SQLite fallback) | The confirmed `建议申报` conclusion remained visible beside `已转项目：Stage 3 smoke project`, linking to `/projects/1`, with no second conversion control. |
+
+An additional reader-role policy check observed read access to the confirmed conclusion and history with no conversion or conclusion-mutation control.
 
 ## Audit and security review
 
@@ -63,6 +68,7 @@ The vertical fixture exercised one creation, two forward status transitions, one
 
 - Closed policy detail lifecycle rendering by adding an independent conversion/link block without changing the confirmed human conclusion.
 - Made the conversion drawer lifecycle local and navigated successful creation to project detail.
+- Bound policy-detail conversion to the displayed policy and scan paginated convertible results until that fixed policy is found; ledger-page selection remains unchanged.
 - Added router mocks required by the lifecycle integration.
 - Corrected project workflow/query type narrowing surfaced by the exact mypy gate.
 - Guarded a missing locked policy and nullable SQLite driver connection.
@@ -71,4 +77,3 @@ The vertical fixture exercised one creation, two forward status transitions, one
 ## Non-blocking warnings and remaining gates
 
 Vite continues to emit only the known third-party PURE-annotation and main-chunk-over-500-kB warnings. They do not fail this build. Before Stage 3 can be marked release-ready, rerun the prescribed isolated MySQL 8.4 Compose health/migration sequence, the opt-in MySQL concurrency contract, and the container-log security scans in a Docker-capable environment.
-
