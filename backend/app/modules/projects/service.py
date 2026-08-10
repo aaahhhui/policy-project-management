@@ -17,12 +17,14 @@ from app.modules.projects.errors import (
     PolicyAlreadyConverted,
     PolicyNotConvertible,
     PrimaryEntityMissing,
+    ProjectFieldValidationFailed,
     ProjectLiaisonRequired,
     ProjectUserInactive,
+    ProjectVersionConflict,
     ProjectWriteForbidden,
 )
 from app.modules.projects.models import Project, ProjectMember, ProjectStatusHistory
-from app.modules.projects.permissions import capabilities_for
+from app.modules.projects.permissions import assert_update_fields_allowed, capabilities_for
 from app.modules.projects.schemas import (
     ConvertiblePolicyItem,
     ConvertiblePolicyPage,
@@ -40,6 +42,8 @@ from app.modules.projects.schemas import (
     ProjectPolicySnapshot,
     ProjectStatusHistoryDetail,
     ProjectSummary,
+    ProjectPrimaryEntityCorrectionInput,
+    ProjectUpdateInput,
     ProjectUserOption,
 )
 
@@ -246,6 +250,213 @@ class ProjectService:
         if existing_project is not None:
             raise PolicyAlreadyConverted(project_id=existing_project.id)
         raise PolicyAlreadyConverted()
+
+    def update_project(
+        self, project_id: int, payload: ProjectUpdateInput, actor: User
+    ) -> ProjectDetail:
+        changes = payload.model_dump(exclude_unset=True)
+        expected_version = int(changes.pop("expected_version"))
+        project = self._locked_project(project_id)
+        if project.version != expected_version:
+            raise ProjectVersionConflict(current_version=project.version)
+        try:
+            assert_update_fields_allowed(project=project, actor=actor, fields=set(changes))
+        except ProjectWriteForbidden:
+            self._record_write_denied(project=project, actor=actor, attempted_action="update_project")
+            raise
+
+        self._validate_update(project=project, changes=changes)
+        before = self._audit_values(project, set(changes))
+        members = self._selected_members(changes.pop("member_user_ids")) if "member_user_ids" in changes else None
+        liaison = self._selected_liaison(changes["liaison_user_id"]) if "liaison_user_id" in changes else None
+
+        for field, value in changes.items():
+            if field != "liaison_user_id":
+                setattr(project, field, value)
+        if liaison is not None:
+            project.liaison_user_id = liaison.id
+            project.liaison_display_name = liaison.display_name
+        if members is not None:
+            self.db.query(ProjectMember).filter(ProjectMember.project_id == project.id).delete(
+                synchronize_session=False
+            )
+            now = datetime.now(UTC)
+            self.db.add_all(
+                ProjectMember(
+                    project_id=project.id,
+                    user_id=member.id,
+                    member_display_name=member.display_name,
+                    added_at=now,
+                )
+                for member in members
+            )
+        project.version += 1
+        self.db.flush()
+        self._record_update_audit(project=project, actor=actor, before=before)
+        return ProjectQueryService(self.db).detail(project.id, actor=actor)
+
+    def correct_primary_entity(
+        self,
+        project_id: int,
+        payload: ProjectPrimaryEntityCorrectionInput,
+        actor: User,
+    ) -> ProjectDetail:
+        project = self._locked_project(project_id)
+        if project.version != payload.expected_version:
+            raise ProjectVersionConflict(current_version=project.version)
+        if not capabilities_for(actor=actor, project=project).can_correct_primary_entity:
+            self._record_write_denied(
+                project=project, actor=actor, attempted_action="correct_primary_entity"
+            )
+            raise ProjectWriteForbidden()
+
+        policy = self.db.scalar(select(Policy).where(Policy.id == project.policy_id).with_for_update())
+        current = self.db.scalar(
+            select(PrimaryEntityDecision)
+            .where(PrimaryEntityDecision.current_policy_id == policy.id)
+            .with_for_update()
+        )
+        target = self.db.scalar(
+            select(PrimaryEntityDecision)
+            .where(PrimaryEntityDecision.id == payload.primary_entity_decision_id)
+            .with_for_update()
+        )
+        if current is None or target is None or target.id != current.id:
+            raise PrimaryEntityMissing()
+        if project.primary_entity_decision_id == target.id:
+            return ProjectQueryService(self.db).detail(project.id, actor=actor)
+
+        before = {
+            "primary_entity_decision_id": project.primary_entity_decision_id,
+            "primary_entity_seed_code": project.primary_entity_seed_code,
+        }
+        project.primary_entity_decision_id = target.id
+        project.primary_entity_seed_code = target.entity_seed_code
+        project.primary_entity_legal_name = target.entity_legal_name
+        project.version += 1
+        self.db.flush()
+        AuditService(self.db).record(
+            "project_primary_entity_corrected",
+            actor.id,
+            "project",
+            project.id,
+            reason=payload.reason,
+            changes={
+                "before": before,
+                "after": {
+                    "primary_entity_decision_id": target.id,
+                    "primary_entity_seed_code": target.entity_seed_code,
+                },
+            },
+        )
+        return ProjectQueryService(self.db).detail(project.id, actor=actor)
+
+    def _locked_project(self, project_id: int) -> Project:
+        project = self.db.scalar(select(Project).where(Project.id == project_id).with_for_update())
+        if project is None:
+            raise LookupError("project not found")
+        return project
+
+    def _validate_update(self, *, project: Project, changes: dict[str, object]) -> None:
+        if "liaison_user_id" in changes and changes["liaison_user_id"] is None:
+            raise ProjectLiaisonRequired()
+        result_fields = {"result_on", "result_note"}
+        if result_fields & changes.keys() and project.status not in {"succeeded", "rejected"}:
+            raise ProjectFieldValidationFailed()
+        if "termination_note" in changes and project.status != "terminated":
+            raise ProjectFieldValidationFailed()
+
+        submitted_on = changes.get("submitted_on", project.submitted_on)
+        result_on = changes.get("result_on", project.result_on)
+        today = date.today()
+        if submitted_on is not None and (not isinstance(submitted_on, date) or submitted_on > today):
+            raise ProjectFieldValidationFailed()
+        if result_on is not None and (
+            not isinstance(result_on, date)
+            or result_on > today
+            or (isinstance(submitted_on, date) and result_on < submitted_on)
+        ):
+            raise ProjectFieldValidationFailed()
+        if project.status in {"succeeded", "rejected"} and result_on is None:
+            raise ProjectFieldValidationFailed()
+        if project.status == "terminated" and not changes.get(
+            "termination_note", project.termination_note
+        ):
+            raise ProjectFieldValidationFailed()
+
+    def _selected_liaison(self, liaison_user_id: object) -> User:
+        if not isinstance(liaison_user_id, int):
+            raise ProjectLiaisonRequired()
+        liaison = self.db.get(User, liaison_user_id)
+        if liaison is None:
+            raise ProjectLiaisonRequired()
+        if not liaison.is_active:
+            raise ProjectUserInactive(user_id=liaison.id)
+        return liaison
+
+    def _selected_members(self, member_user_ids: object) -> list[User]:
+        if not isinstance(member_user_ids, list):
+            raise ProjectFieldValidationFailed()
+        people = {
+            person.id: person
+            for person in self.db.scalars(select(User).where(User.id.in_(member_user_ids)))
+        }
+        members = [people.get(member_user_id) for member_user_id in member_user_ids]
+        if any(member is None or not member.is_active for member in members):
+            inactive = next((member for member in members if member is not None and not member.is_active), None)
+            raise ProjectUserInactive(user_id=inactive.id if inactive is not None else None)
+        return [member for member in members if member is not None]
+
+    def _audit_values(self, project: Project, fields: set[str]) -> dict[str, object]:
+        values: dict[str, object] = {}
+        for field in fields:
+            if field == "member_user_ids":
+                values[field] = list(
+                    self.db.scalars(
+                        select(ProjectMember.user_id)
+                        .where(ProjectMember.project_id == project.id)
+                        .order_by(ProjectMember.id)
+                        .limit(100)
+                    )
+                )
+            elif field == "liaison_user_id":
+                values[field] = project.liaison_user_id
+            else:
+                values[field] = self._bounded_audit_value(getattr(project, field))
+        return values
+
+    @staticmethod
+    def _bounded_audit_value(value: object) -> object:
+        if isinstance(value, date):
+            return value.isoformat()
+        if isinstance(value, str):
+            return value[:256]
+        return value
+
+    def _record_update_audit(
+        self, *, project: Project, actor: User, before: dict[str, object]
+    ) -> None:
+        after = self._audit_values(project, set(before))
+        changed_before = {field: value for field, value in before.items() if after[field] != value}
+        if changed_before:
+            AuditService(self.db).record(
+                "project_updated",
+                actor.id,
+                "project",
+                project.id,
+                changes={"before": changed_before, "after": {field: after[field] for field in changed_before}},
+            )
+
+    def _record_write_denied(
+        self, *, project: Project, actor: User, attempted_action: str
+    ) -> None:
+        AuditService(self.db).record(
+            "project_write_denied",
+            actor.id,
+            "project",
+            project.id,
+            changes={"attempted_action": attempted_action, "code": "project_write_forbidden"},
+        )
 
 
 class ProjectQueryService:

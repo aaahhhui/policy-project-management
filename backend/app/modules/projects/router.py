@@ -21,6 +21,8 @@ from app.modules.projects.schemas import (
     ProjectStatus,
     ProjectSummary,
     ProjectUserOption,
+    ProjectPrimaryEntityCorrectionInput,
+    ProjectUpdateInput,
     ConvertiblePolicyPage,
 )
 from app.modules.projects.service import ProjectQueryService, ProjectService
@@ -143,6 +145,53 @@ def convert_policy(
         return result
     except ProjectError as error:
         db.rollback()
+        raise _project_error_response(error) from None
+
+
+@router.patch("/api/projects/{project_id}", response_model=ProjectDetail)
+def update_project(
+    project_id: int,
+    payload: ProjectUpdateInput,
+    actor: Owner,
+    db: Session = Depends(get_db),
+) -> ProjectDetail:
+    try:
+        result = ProjectService(db).update_project(project_id, payload, actor)
+        db.commit()
+        return result
+    except LookupError as error:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found") from error
+    except ProjectError as error:
+        if error.code == "project_write_forbidden":
+            db.commit()
+        else:
+            db.rollback()
+        raise _project_error_response(error) from None
+
+
+@router.post(
+    "/api/projects/{project_id}/primary-entity-corrections",
+    response_model=ProjectDetail,
+)
+def correct_primary_entity(
+    project_id: int,
+    payload: ProjectPrimaryEntityCorrectionInput,
+    actor: Owner,
+    db: Session = Depends(get_db),
+) -> ProjectDetail:
+    try:
+        result = ProjectService(db).correct_primary_entity(project_id, payload, actor)
+        db.commit()
+        return result
+    except LookupError as error:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found") from error
+    except ProjectError as error:
+        if error.code == "project_write_forbidden":
+            db.commit()
+        else:
+            db.rollback()
         raise _project_error_response(error) from None
 
 
