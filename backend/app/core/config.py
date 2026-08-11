@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,6 +20,9 @@ class Settings(BaseSettings):
     deepseek_timeout_seconds: int = 120
     deepseek_max_retries: int = 3
     deepseek_api_key: str | None = None
+    wecom_webhook_url: SecretStr | None = None
+    wecom_timeout_seconds: int = 10
+    public_base_url: str | None = None
 
 
 @lru_cache

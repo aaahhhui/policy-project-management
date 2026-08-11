@@ -151,7 +151,7 @@ def upgrade() -> None:
         sa.Column("trigger_type", attempt_trigger_type, nullable=False),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("result", attempt_result_type, nullable=False),
+        sa.Column("result", attempt_result_type, nullable=True),
         sa.Column("http_status", sa.Integer(), nullable=True),
         sa.Column("provider_error_code", sa.String(length=128), nullable=True),
         sa.Column("failure_summary", sa.String(length=500), nullable=True),

@@ -112,6 +112,11 @@ def test_stage4_tables_columns_constraints_and_indexes_exist(
     assert ("event_key",) in delivery_uniques
     assert ("delivery_id", "attempt_number") in attempt_uniques
     assert ("source_id",) in source_uniques
+    attempt_columns = {
+        column["name"]: column
+        for column in migrated_inspector.get_columns("notification_attempts")
+    }
+    assert attempt_columns["result"]["nullable"] is True
 
     delivery_indexes = {
         tuple(item["column_names"])

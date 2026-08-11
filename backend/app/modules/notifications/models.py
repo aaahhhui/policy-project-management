@@ -140,7 +140,7 @@ class NotificationAttempt(Base):
     finished_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    result: Mapped[str] = mapped_column(ATTEMPT_RESULT_TYPE, nullable=False)
+    result: Mapped[str | None] = mapped_column(ATTEMPT_RESULT_TYPE, nullable=True)
     http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
     provider_error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
     failure_summary: Mapped[str | None] = mapped_column(String(500), nullable=True)
