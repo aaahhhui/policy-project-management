@@ -11,7 +11,10 @@ from app.modules.evaluations.models import EntityEvaluation, EvaluationBatch
 from app.modules.policies.models import Policy, PolicyVersion
 
 if TYPE_CHECKING:
+    from app.modules.collection.models import CollectionTask
+    from app.modules.notifications.models import SourceHealthState
     from app.modules.projects.models import Project
+    from app.modules.sources.models import PolicySource
 
 AVAILABLE_EVALUATION_STATUSES = {"awaiting_confirmation", "confirmed"}
 DEFAULT_HIGH_MATCH_SCORE_THRESHOLD = 80
@@ -86,6 +89,31 @@ def project_first_status_notification_event(
             },
         )
     return None
+
+
+def source_failure_notification_event(
+    source: PolicySource,
+    state: SourceHealthState,
+    task: CollectionTask,
+) -> NotificationEvent:
+    if state.episode_started_task_id is None:
+        raise ValueError("source failure episode has no starting task")
+    return NotificationEvent(
+        event_key=(
+            f"source:{source.id}:failure_episode:{state.episode_started_task_id}"
+        ),
+        event_type="source_failure_episode",
+        display_type="来源异常",
+        object_type="source",
+        object_id=source.id,
+        object_name=source.name,
+        detail_path="/sources",
+        message_snapshot={
+            "consecutive_failure_count": state.consecutive_failure_count,
+            "latest_task_id": task.id,
+            "failure_summary": "来源连续采集异常，请查看采集任务记录。",
+        },
+    )
 
 
 def _date_value(value: date | None) -> str | None:

@@ -4,6 +4,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.modules.collection.models import CollectionTask, CollectionTaskItem
+from app.modules.notifications.models import SourceHealthState
+from app.modules.notifications.service import NotificationService
 from app.modules.sources.models import PolicySource
 from app.modules.sources.service import SourceService
 
@@ -82,7 +84,13 @@ class CollectionTaskService:
         )
 
     def finish_from_items(self, task_id: int, process_returncode: int) -> CollectionTask:
-        task = self.get(task_id)
+        task = self.db.scalar(
+            select(CollectionTask)
+            .where(CollectionTask.id == task_id)
+            .with_for_update()
+        )
+        if task is None:
+            raise CollectionTaskNotFound(f"collection task {task_id} was not found")
         rows = self.db.execute(
             select(CollectionTaskItem.status, func.count(CollectionTaskItem.id))
             .where(CollectionTaskItem.task_id == task_id)
@@ -104,5 +112,50 @@ class CollectionTaskService:
         task.finished_at = datetime.now(UTC)
         if process_returncode != 0:
             task.error_message = f"collector exited with code {process_returncode}"
+        self.record_source_task_outcome(task)
         self.db.commit()
         return task
+
+    def record_source_task_outcome(self, task: CollectionTask) -> None:
+        if task.status not in {"failed", "partial_failed", "succeeded"}:
+            return
+        source = self.db.scalar(
+            select(PolicySource)
+            .where(PolicySource.id == task.source_id)
+            .with_for_update()
+        )
+        if source is None:
+            raise ValueError(f"policy source {task.source_id} was not found")
+        state = self.db.scalar(
+            select(SourceHealthState)
+            .where(SourceHealthState.source_id == task.source_id)
+            .with_for_update()
+        )
+        if state is None:
+            state = SourceHealthState(
+                source_id=task.source_id,
+                consecutive_failure_count=0,
+            )
+            self.db.add(state)
+            self.db.flush()
+        if (
+            state.last_processed_task_id is not None
+            and task.id <= state.last_processed_task_id
+        ):
+            return
+
+        state.last_processed_task_id = task.id
+        if task.status == "succeeded":
+            state.consecutive_failure_count = 0
+            state.episode_started_task_id = None
+            self.db.flush()
+            return
+
+        if state.consecutive_failure_count == 0:
+            state.episode_started_task_id = task.id
+        state.consecutive_failure_count += 1
+        self.db.flush()
+        if state.consecutive_failure_count == 3:
+            NotificationService(self.db).enqueue_source_failure_episode(
+                source, state, task
+            )

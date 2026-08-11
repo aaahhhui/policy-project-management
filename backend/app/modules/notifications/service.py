@@ -11,11 +11,15 @@ from app.modules.notifications.events import (
     NotificationEvent,
     project_created_notification_event,
     project_first_status_notification_event,
+    source_failure_notification_event,
 )
 from app.modules.notifications.models import NotificationDelivery
 
 if TYPE_CHECKING:
+    from app.modules.collection.models import CollectionTask
+    from app.modules.notifications.models import SourceHealthState
     from app.modules.projects.models import Project
+    from app.modules.sources.models import PolicySource
 
 
 class NotificationService:
@@ -69,3 +73,11 @@ class NotificationService:
     ) -> NotificationDelivery | None:
         event = project_first_status_notification_event(project, status)
         return self.enqueue(event) if event is not None else None
+
+    def enqueue_source_failure_episode(
+        self,
+        source: PolicySource,
+        state: SourceHealthState,
+        task: CollectionTask,
+    ) -> NotificationDelivery:
+        return self.enqueue(source_failure_notification_event(source, state, task))
