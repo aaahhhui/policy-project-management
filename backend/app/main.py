@@ -4,6 +4,7 @@ from app.modules.auth.router import router as auth_router
 from app.modules.collection.router import router as collection_router
 from app.modules.evaluations.router import router as evaluations_router
 from app.modules.evaluation_rules.router import router as evaluation_rules_router
+from app.modules.notifications.router import router as notifications_router
 from app.modules.policies.router import router as policies_router
 from app.modules.profiles.router import router as profiles_router
 from app.modules.projects.router import router as projects_router
@@ -16,6 +17,7 @@ app.include_router(auth_router)
 app.include_router(collection_router)
 app.include_router(evaluations_router)
 app.include_router(evaluation_rules_router)
+app.include_router(notifications_router)
 app.include_router(profiles_router)
 app.include_router(projects_router)
 app.include_router(policies_router)

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -17,6 +17,13 @@ from app.modules.notifications.events import (
     source_failure_notification_event,
 )
 from app.modules.notifications.models import NotificationAttempt, NotificationDelivery
+from app.modules.notifications.schemas import (
+    NotificationAttemptResponse,
+    NotificationDetail,
+    NotificationListItem,
+    NotificationPage,
+    NotificationStatus,
+)
 
 RETRY_DELAYS_SECONDS = (0, 60, 300, 1800)
 CLAIM_TIMEOUT = timedelta(minutes=5)
@@ -87,6 +94,81 @@ class NotificationService:
         task: CollectionTask,
     ) -> NotificationDelivery:
         return self.enqueue(source_failure_notification_event(source, state, task))
+
+    def list_notifications(
+        self,
+        *,
+        event_type: str | None,
+        status: str | None,
+        triggered_from: datetime | None,
+        triggered_to: datetime | None,
+        page: int,
+        page_size: int,
+    ) -> NotificationPage:
+        filters = []
+        if event_type is not None:
+            filters.append(NotificationDelivery.event_type == event_type)
+        if status is not None:
+            filters.append(NotificationDelivery.status == status)
+        if triggered_from is not None:
+            filters.append(NotificationDelivery.triggered_at >= triggered_from)
+        if triggered_to is not None:
+            filters.append(NotificationDelivery.triggered_at <= triggered_to)
+        total = int(
+            self.db.scalar(
+                select(func.count(NotificationDelivery.id)).where(*filters)
+            )
+            or 0
+        )
+        deliveries = list(
+            self.db.scalars(
+                select(NotificationDelivery)
+                .where(*filters)
+                .order_by(
+                    NotificationDelivery.triggered_at.desc(),
+                    NotificationDelivery.id.desc(),
+                )
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        )
+        return NotificationPage(
+            items=[self._list_item(delivery) for delivery in deliveries],
+            page=page,
+            page_size=page_size,
+            total=total,
+        )
+
+    def detail(self, notification_id: int) -> NotificationDetail:
+        delivery = self.db.get(NotificationDelivery, notification_id)
+        if delivery is None:
+            raise NotificationNotFound
+        return self._detail(delivery)
+
+    def retry_failed(
+        self, notification_id: int, expected_version: int
+    ) -> tuple[NotificationDetail, int]:
+        delivery = self.db.scalar(
+            select(NotificationDelivery)
+            .where(NotificationDelivery.id == notification_id)
+            .with_for_update()
+        )
+        if delivery is None:
+            raise NotificationNotFound
+        if delivery.version != expected_version:
+            raise NotificationVersionConflict
+        if delivery.status != "failed" or delivery.sent_at is not None:
+            raise NotificationRetryNotAllowed
+        previous_version = delivery.version
+        delivery.status = "pending"
+        delivery.send_round += 1
+        delivery.round_attempt_count = 0
+        delivery.next_attempt_at = None
+        delivery.claim_token = None
+        delivery.claimed_at = None
+        delivery.version += 1
+        self.db.flush()
+        return self._detail(delivery), previous_version
 
     def claim_next(self, now: datetime) -> NotificationDelivery | None:
         self._prepare_worker_transaction()
@@ -281,3 +363,59 @@ class NotificationService:
         if self.db.new or self.db.dirty or self.db.deleted:
             raise RuntimeError("notification worker operation requires a clean session")
         self.db.rollback()
+
+    @staticmethod
+    def _list_item(delivery: NotificationDelivery) -> NotificationListItem:
+        return NotificationListItem(
+            id=delivery.id,
+            event_type=delivery.event_type,
+            display_type=delivery.display_type,
+            object_type=delivery.object_type,
+            object_id=delivery.object_id,
+            object_name=delivery.object_name_snapshot,
+            detail_path=delivery.detail_path,
+            triggered_at=delivery.triggered_at,
+            status=cast(NotificationStatus, delivery.status),
+            attempt_count=delivery.attempt_count,
+            send_round=delivery.send_round,
+            round_attempt_count=delivery.round_attempt_count,
+            next_attempt_at=delivery.next_attempt_at,
+            sent_at=delivery.sent_at,
+            last_error_code=delivery.last_error_code,
+            last_failure_summary=delivery.last_failure_summary,
+            version=delivery.version,
+        )
+
+    @classmethod
+    def _detail(cls, delivery: NotificationDelivery) -> NotificationDetail:
+        item = cls._list_item(delivery)
+        return NotificationDetail(
+            **item.model_dump(),
+            message_snapshot=deepcopy(delivery.message_snapshot),
+            attempts=[
+                NotificationAttemptResponse(
+                    id=attempt.id,
+                    attempt_number=attempt.attempt_number,
+                    trigger_type=attempt.trigger_type,
+                    started_at=attempt.started_at,
+                    finished_at=attempt.finished_at,
+                    result=attempt.result,
+                    http_status=attempt.http_status,
+                    provider_error_code=attempt.provider_error_code,
+                    failure_summary=attempt.failure_summary,
+                )
+                for attempt in delivery.attempts
+            ],
+        )
+
+
+class NotificationNotFound(Exception):
+    pass
+
+
+class NotificationVersionConflict(Exception):
+    pass
+
+
+class NotificationRetryNotAllowed(Exception):
+    pass
