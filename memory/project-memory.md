@@ -427,3 +427,10 @@
 - Webhook 仅从服务端环境或秘密配置读取，禁止进入数据库、前端、API、审计、日志、文档实例或 Git。群消息使用受控摘要和详情链接；企业微信内置浏览器未登录时应账号密码登录并安全回跳到正确政策或项目详情。
 - 新增负责人专用 `/notifications` 列表、详情、尝试历史和最终失败手动重发；其他角色服务端拒绝。移动端不提供重发，项目详情继续只读。真实企业微信手机端 UAT 必须验证登录回跳和详情，不以普通 Chromium 移动视口替代。
 - Stage 4 启用前的历史项目、评估和采集事件不补发；迁移只初始化规则阈值与来源健康状态。实施计划为 `docs/superpowers/plans/2026-08-11-stage-4-wecom-notification.md`，必须严格 TDD、频繁提交，并在真实 Webhook/HTTPS Demo/测试账号准备后完成 Docker、MySQL、安全扫描和手机 UAT。
+
+## 29. 2026-08-11 Stage 4 本地实现与待收口验收
+
+- 六类批准事件、事务型通知记录、WeCom 发送适配器与 notifier、负责人专用记录/手动重发 API，以及 `/notifications` 界面和安全登录回跳均已按 TDD 实现；所有外部投递保持“至少一次”，本地成功以唯一事件键幂等。
+- 本地完整验证基线：后端 `453 passed, 2 skipped`，Ruff 通过，mypy `85` 个源文件通过；前端 `31` 个测试文件、`141` 项测试通过，Vue 类型检查与 Vite 生产构建通过。Vite 仅保留既有第三方 PURE 注释和主 chunk 超过 500 kB 的非阻断警告。
+- Chromium `390x844` fallback 已确认通知列表、详情安全快照与发送轨迹可读，且移动端隐藏手动重发；该结果不替代真实企业微信内置浏览器 UAT。
+- 当前发布验收仍受外部前置条件阻塞：本会话找不到 Docker CLI，故尚未执行 MySQL 8.4 Compose 健康、`0008 -> 0007 -> 0008` 迁移、容器日志扫描与真实并发检查；真实企业微信 UAT 还需要仅供本地秘密配置的测试 Webhook、手机可访问 HTTPS Demo 和专用测试账号。完整状态见 `docs/testing/2026-08-11-stage-4-wecom-notification-smoke-test.md`。
