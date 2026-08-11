@@ -14,12 +14,16 @@
 | --- | --- | --- |
 | 通知记录桌面布局 | PASS（本地 SQLite） | 负责人可筛选、分页、查看安全快照和发送轨迹；终态失败记录显示手动重发。 |
 | 通知记录移动布局 | PASS（本地 Chromium 390x844） | 列表、详情快照和发送轨迹可读；手动重发控件隐藏。 |
-| 后端完整回归 | PASS | `453 passed, 2 skipped`；包含通知契约、权限、审计和零泄漏回归。 |
+| 后端完整回归 | PASS | `454 passed, 2 skipped`；包含通知契约、权限、审计、零泄漏和乱序来源任务完成回归。 |
 | Ruff / mypy | PASS | `ruff check .` 通过；`mypy app workers` 为 85 个源文件通过。 |
 | 前端完整回归与构建 | PASS | 31 个测试文件、141 项测试通过；Vue 类型检查与 Vite 构建退出 0。 |
 | 本地服务日志凭据扫描 | PASS | Webhook、Authorization、Cookie 和私钥模式均为 0 匹配。 |
 | Docker / MySQL 8.4 | 待执行 | 需要可用 Docker 环境执行 Compose 健康检查和 `0008 -> 0007 -> 0008` 迁移。 |
 | 真实企业微信内置浏览器 UAT | 待执行 | 需要测试 Webhook、手机可访问的 HTTPS Demo 与专用测试账号。 |
+
+## 代码审查
+
+独立审查覆盖 Stage 4 完整提交范围，发现并修复了“较早创建、较晚完成”的来源采集任务会被错误忽略的问题。修复后的复审没有 Critical 或 Important 问题；不以此替代待执行的 Docker/MySQL 和真实企业微信内置浏览器门禁。
 
 ## 真实移动 UAT 清单
 
