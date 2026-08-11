@@ -4,9 +4,11 @@ import pytest
 from sqlalchemy import func, select
 
 from app.modules.audit.models import AuditEvent
+from app.modules.notifications.models import NotificationDelivery
 from app.modules.projects.errors import (
     ProjectCorrectionInvalid,
     ProjectTransitionInvalid,
+    ProjectVersionConflict,
     ProjectWriteForbidden,
 )
 from app.modules.projects.models import ProjectMember, ProjectStatusHistory
@@ -53,6 +55,7 @@ def _assert_no_success_status_ledger(db) -> None:
         )
         == 0
     )
+    assert db.scalar(select(func.count(NotificationDelivery.id))) == 0
 
 
 @pytest.mark.parametrize(
@@ -77,6 +80,58 @@ def test_allowed_transition_persists_projection_history_and_audit(db, source, ta
     assert (history.action, history.previous_status, history.new_status) == ("transitioned", source, target)
     assert (history.from_version, history.to_version) == (1, 2)
     assert db.scalar(select(func.count(AuditEvent.id)).where(AuditEvent.action == "project_status_changed")) == 1
+    delivery = db.scalar(select(NotificationDelivery))
+    if target == "submitted":
+        assert delivery is not None
+        assert delivery.event_key == f"project:{project.id}:first_submitted"
+        assert delivery.message_snapshot["submitted_on"] == values[
+            "submitted_on"
+        ].isoformat()
+    elif target == "succeeded":
+        assert delivery is not None
+        assert delivery.event_key == f"project:{project.id}:first_succeeded"
+        assert delivery.message_snapshot["result_on"] == values["result_on"].isoformat()
+    else:
+        assert delivery is None
+
+
+def test_correction_into_succeeded_uses_the_same_first_status_event(db) -> None:
+    owner, _liaison, project = _project(db, status="rejected")
+
+    ProjectService(db).correct_status(
+        project.id,
+        ProjectCorrectionInput(
+            expected_version=1,
+            target_status="succeeded",
+            result_on=date.today(),
+            result_note="correction approved",
+        ),
+        owner,
+    )
+
+    delivery = db.scalar(select(NotificationDelivery))
+    assert delivery is not None
+    assert delivery.event_key == f"project:{project.id}:first_succeeded"
+    assert delivery.display_type == "项目成功"
+    assert delivery.message_snapshot == {
+        "result_on": date.today().isoformat(),
+        "result_note": "correction approved",
+    }
+
+
+def test_status_version_conflict_creates_no_notification(db) -> None:
+    owner, _liaison, project = _project(db)
+    project.version = 2
+    db.flush()
+
+    with pytest.raises(ProjectVersionConflict):
+        ProjectService(db).transition(
+            project.id,
+            _transition("submitted", version=1, submitted_on=date.today()),
+            owner,
+        )
+
+    assert db.scalar(select(func.count(NotificationDelivery.id))) == 0
 
 
 @pytest.mark.parametrize(

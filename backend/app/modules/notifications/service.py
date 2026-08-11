@@ -1,11 +1,21 @@
+from __future__ import annotations
+
 from copy import deepcopy
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.modules.notifications.events import NotificationEvent
+from app.modules.notifications.events import (
+    NotificationEvent,
+    project_created_notification_event,
+    project_first_status_notification_event,
+)
 from app.modules.notifications.models import NotificationDelivery
+
+if TYPE_CHECKING:
+    from app.modules.projects.models import Project
 
 
 class NotificationService:
@@ -50,3 +60,12 @@ class NotificationService:
                 raise
             return existing
         return delivery
+
+    def enqueue_project_created(self, project: Project) -> NotificationDelivery:
+        return self.enqueue(project_created_notification_event(project))
+
+    def enqueue_project_first_status(
+        self, project: Project, status: str
+    ) -> NotificationDelivery | None:
+        event = project_first_status_notification_event(project, status)
+        return self.enqueue(event) if event is not None else None

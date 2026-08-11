@@ -28,7 +28,7 @@ def migrated_inspector(monkeypatch: pytest.MonkeyPatch) -> Iterator[Inspector]:
     engine = create_engine(database_url, poolclass=StaticPool)
     with engine.begin() as connection:
         config.attributes["connection"] = connection
-        command.upgrade(config, "head")
+        command.upgrade(config, RECONCILIATION_REVISION)
         yield inspect(connection)
 
     engine.dispose()
@@ -46,7 +46,7 @@ def migrated_connection(monkeypatch: pytest.MonkeyPatch) -> Iterator[Connection]
     engine = create_engine(database_url, poolclass=StaticPool)
     with engine.begin() as connection:
         config.attributes["connection"] = connection
-        command.upgrade(config, "head")
+        command.upgrade(config, RECONCILIATION_REVISION)
         yield connection
 
     engine.dispose()
@@ -257,7 +257,7 @@ def test_historical_stage2_constraint_is_preserved_then_reconciled_at_head(
         assert "evaluation_status_v2_code" in stage2_checks
         assert "evaluation_status_v3_code" not in stage2_checks
 
-        command.upgrade(config, "head")
+        command.upgrade(config, RECONCILIATION_REVISION)
         head_checks = {
             check["name"]
             for check in inspect(connection).get_check_constraints("evaluation_batches")
@@ -334,7 +334,7 @@ def test_reconciliation_accepts_schema_already_using_v3_constraint_and_legacy_da
                 {"history_date": history_date},
             )
 
-        command.upgrade(config, "head")
+        command.upgrade(config, RECONCILIATION_REVISION)
         reconciled_checks = {
             check["name"]
             for check in inspect(connection).get_check_constraints("evaluation_batches")
@@ -369,7 +369,7 @@ def test_stage3_downgrade_removes_only_project_tables(
     engine = create_engine(database_url, poolclass=StaticPool)
     with engine.begin() as connection:
         config.attributes["connection"] = connection
-        command.upgrade(config, "head")
+        command.upgrade(config, RECONCILIATION_REVISION)
         head_tables = set(inspect(connection).get_table_names())
 
         command.downgrade(config, "0005_decision_timestamps")

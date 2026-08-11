@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.modules.evaluations.models import EntityEvaluation, EvaluationBatch
 from app.modules.policies.models import Policy, PolicyVersion
+
+if TYPE_CHECKING:
+    from app.modules.projects.models import Project
 
 AVAILABLE_EVALUATION_STATUSES = {"awaiting_confirmation", "confirmed"}
 DEFAULT_HIGH_MATCH_SCORE_THRESHOLD = 80
@@ -31,6 +36,60 @@ class _EvaluationSnapshot:
     high_match: bool
     threshold: int
     entity_match_levels: dict[str, str]
+
+
+def project_created_notification_event(project: Project) -> NotificationEvent:
+    return NotificationEvent(
+        event_key=f"project:{project.id}:created",
+        event_type="project_created",
+        display_type="政策转项目",
+        object_type="project",
+        object_id=project.id,
+        object_name=project.name,
+        detail_path=f"/projects/{project.id}",
+        message_snapshot={
+            "primary_entity_legal_name": project.primary_entity_legal_name,
+            "liaison_display_name": project.liaison_display_name,
+            "deadline_on": _date_value(project.deadline_on),
+        },
+    )
+
+
+def project_first_status_notification_event(
+    project: Project, status: str
+) -> NotificationEvent | None:
+    if status == "submitted":
+        return NotificationEvent(
+            event_key=f"project:{project.id}:first_submitted",
+            event_type="project_first_submitted",
+            display_type="项目已提交",
+            object_type="project",
+            object_id=project.id,
+            object_name=project.name,
+            detail_path=f"/projects/{project.id}",
+            message_snapshot={"submitted_on": _date_value(project.submitted_on)},
+        )
+    if status == "succeeded":
+        return NotificationEvent(
+            event_key=f"project:{project.id}:first_succeeded",
+            event_type="project_first_succeeded",
+            display_type="项目成功",
+            object_type="project",
+            object_id=project.id,
+            object_name=project.name,
+            detail_path=f"/projects/{project.id}",
+            message_snapshot={
+                "result_on": _date_value(project.result_on),
+                "result_note": (
+                    project.result_note[:500] if project.result_note is not None else None
+                ),
+            },
+        )
+    return None
+
+
+def _date_value(value: date | None) -> str | None:
+    return value.isoformat() if value is not None else None
 
 
 def evaluation_notification_event(
