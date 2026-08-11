@@ -18,7 +18,10 @@
 | Ruff / mypy | PASS | `ruff check .` 通过；`mypy app workers` 为 85 个源文件通过。 |
 | 前端完整回归与构建 | PASS | 31 个测试文件、141 项测试通过；Vue 类型检查与 Vite 构建退出 0。 |
 | 本地服务日志凭据扫描 | PASS | Webhook、Authorization、Cookie 和私钥模式均为 0 匹配。 |
-| Docker / MySQL 8.4 | 待执行 | 需要可用 Docker 环境执行 Compose 健康检查和 `0008 -> 0007 -> 0008` 迁移。 |
+| Docker Compose / MySQL 8.4 | PASS | 独立 `stage4-wecom-verify` 项目中 mysql、api、web、collector、evaluator、notifier、scheduler 均健康；`/api/health` 返回 `status=ok`。 |
+| MySQL 迁移往返 | PASS | fresh `0001 -> 0008`，以及 `0008 -> 0007_reconcile_eval_constraint -> 0008` 均退出 0。 |
+| MySQL notifier claim / stale claim | PASS | 两个独立 session 对单条待发送记录仅有一个获得 claim；过期 claim 被恢复后，旧 token 无法写入成功。临时记录已按外键顺序清理。 |
+| 容器日志凭据扫描 | PASS | Webhook、Authorization、Cookie、私钥和 OpenAI 风格 key 模式均为 0 匹配。 |
 | 真实企业微信内置浏览器 UAT | 待执行 | 需要测试 Webhook、手机可访问的 HTTPS Demo 与专用测试账号。 |
 
 ## 代码审查

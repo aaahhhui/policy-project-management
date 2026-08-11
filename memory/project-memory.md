@@ -434,4 +434,5 @@
 - 本地完整验证基线：后端 `454 passed, 2 skipped`，Ruff 通过，mypy `85` 个源文件通过；前端 `31` 个测试文件、`141` 项测试通过，Vue 类型检查与 Vite 生产构建通过。Vite 仅保留既有第三方 PURE 注释和主 chunk 超过 500 kB 的非阻断警告。
 - 独立代码审查发现来源任务按创建 ID 截断会漏记“较早创建、较晚完成”的失败结果，已以 TDD 修复为终态任务仅处理一次且乱序完成仍计入；复审无 Critical 或 Important 遗留问题。
 - Chromium `390x844` fallback 已确认通知列表、详情安全快照与发送轨迹可读，且移动端隐藏手动重发；该结果不替代真实企业微信内置浏览器 UAT。
-- 当前发布验收仍受外部前置条件阻塞：本会话找不到 Docker CLI，故尚未执行 MySQL 8.4 Compose 健康、`0008 -> 0007 -> 0008` 迁移、容器日志扫描与真实并发检查；真实企业微信 UAT 还需要仅供本地秘密配置的测试 Webhook、手机可访问 HTTPS Demo 和专用测试账号。完整状态见 `docs/testing/2026-08-11-stage-4-wecom-notification-smoke-test.md`。
+- Docker Desktop 的用户级 CLI 已定位并用于独立 `stage4-wecom-verify` Compose 验收：MySQL 8.4、api、web、collector、evaluator、notifier、scheduler 全部健康，`/api/health` 为 `ok`；fresh `0001 -> 0008` 与 `0008 -> 0007 -> 0008` 迁移均通过。两个 MySQL session 的 claim 竞争只有一个赢家，stale claim 恢复后旧 token 无法覆盖；临时记录已清理。容器日志的 Webhook、Authorization、Cookie、私钥和 OpenAI 风格 key 模式均为 0。
+- 当前唯一外部门禁是实际企业微信 UAT：仍需要仅供本地秘密配置的测试 Webhook、手机可访问 HTTPS Demo 和专用测试账号。完整状态见 `docs/testing/2026-08-11-stage-4-wecom-notification-smoke-test.md`。
