@@ -91,6 +91,8 @@ class CollectionTaskService:
         )
         if task is None:
             raise CollectionTaskNotFound(f"collection task {task_id} was not found")
+        if task.status in {"failed", "partial_failed", "succeeded"}:
+            return task
         rows = self.db.execute(
             select(CollectionTaskItem.status, func.count(CollectionTaskItem.id))
             .where(CollectionTaskItem.task_id == task_id)
@@ -138,10 +140,7 @@ class CollectionTaskService:
             )
             self.db.add(state)
             self.db.flush()
-        if (
-            state.last_processed_task_id is not None
-            and task.id <= state.last_processed_task_id
-        ):
+        if state.last_processed_task_id == task.id:
             return
 
         state.last_processed_task_id = task.id

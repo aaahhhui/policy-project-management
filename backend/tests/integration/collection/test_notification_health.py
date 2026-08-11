@@ -1,7 +1,7 @@
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.modules.collection.models import CollectionTaskItem
+from app.modules.collection.models import CollectionTask, CollectionTaskItem
 from app.modules.collection.service import CollectionTaskService
 from app.modules.notifications.models import NotificationDelivery, SourceHealthState
 from app.modules.sources.models import PolicySource, SourceChannel
@@ -221,3 +221,33 @@ def test_repeated_task_finalization_is_idempotent(db: Session, seeded_owner) -> 
     assert state.episode_started_task_id == first.id
     assert state.last_processed_task_id == first.id
     assert db.scalar(select(func.count(NotificationDelivery.id))) == 0
+
+
+def test_later_created_task_finishing_first_does_not_suppress_earlier_outcome(
+    db: Session, seeded_owner
+) -> None:
+    source, _channel = _source_and_channel(db, seeded_owner)
+    earlier = CollectionTask(
+        source_id=source.id,
+        trigger_type="manual",
+        status="running",
+        requested_by=seeded_owner.id,
+    )
+    later = CollectionTask(
+        source_id=source.id,
+        trigger_type="manual",
+        status="running",
+        requested_by=seeded_owner.id,
+    )
+    db.add_all([earlier, later])
+    db.commit()
+    service = CollectionTaskService(db)
+
+    service.finish_from_items(later.id, process_returncode=17)
+    service.finish_from_items(earlier.id, process_returncode=17)
+    service.finish_from_items(later.id, process_returncode=17)
+
+    state = db.scalar(select(SourceHealthState))
+    assert state is not None
+    assert state.consecutive_failure_count == 2
+    assert state.last_processed_task_id == earlier.id
