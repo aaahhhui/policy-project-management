@@ -91,6 +91,7 @@ class EvaluationRuleService:
                 rule.model_dump(mode="json") for rule in payload.weighted_rules
             ],
             prompt_version=payload.prompt_version,
+            high_match_score_threshold=payload.high_match_score_threshold,
             created_by=actor_id,
         )
         self.db.add(version)
@@ -122,6 +123,7 @@ class EvaluationRuleService:
             rule.model_dump(mode="json") for rule in payload.weighted_rules
         ]
         version.prompt_version = payload.prompt_version
+        version.high_match_score_threshold = payload.high_match_score_threshold
         self.db.flush()
         self.audit.record(
             "evaluation_rule_draft_updated",

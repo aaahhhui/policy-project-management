@@ -17,6 +17,7 @@ from app.modules.auth import models as auth_models
 from app.modules.auth.models import Role, User
 from app.modules.collection import models as collection_models
 from app.modules.evaluations import models as evaluation_models
+from app.modules.notifications import models as notification_models
 from app.modules.policies import models as policy_models
 from app.modules.profiles import models as profile_models
 from app.modules.projects import models as project_models
@@ -26,6 +27,7 @@ _MODEL_MODULES = (
     auth_models,
     collection_models,
     evaluation_models,
+    notification_models,
     policy_models,
     profile_models,
     project_models,

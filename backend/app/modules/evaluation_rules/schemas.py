@@ -24,6 +24,7 @@ class EvaluationRuleDraftInput(BaseModel):
     hard_rules: list[HardRule]
     weighted_rules: list[WeightedRule]
     prompt_version: str = Field(min_length=1, max_length=64)
+    high_match_score_threshold: int = Field(default=80, ge=0, le=100)
 
     @field_validator("name", "prompt_version")
     @classmethod
@@ -52,6 +53,7 @@ class EvaluationRuleVersionResponse(BaseModel):
     hard_rules: list[dict[str, object]]
     weighted_rules: list[dict[str, object]]
     prompt_version: str
+    high_match_score_threshold: int
     created_by: int
     published_by: int | None
     published_at: datetime | None
