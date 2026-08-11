@@ -32,6 +32,7 @@ describe("AppLayout", () => {
         { path: "/evaluation-rules", component: { template: "<div />" } },
         { path: "/sources", component: { template: "<div />" } },
         { path: "/projects", component: { template: "<div />" } },
+        { path: "/notifications", component: { template: "<div />" } },
       ],
     });
     const wrapper = mount(AppLayout, { global: { plugins: [router, ElementPlus] } });
@@ -52,6 +53,7 @@ describe("AppLayout", () => {
         { path: "/evaluation-rules", component: { template: "<div />" } },
         { path: "/sources", component: { template: "<div />" } },
         { path: "/profile", component: { template: "<div />" } },
+        { path: "/notifications", component: { template: "<div />" } },
       ],
     });
 
@@ -61,6 +63,28 @@ describe("AppLayout", () => {
 
       expect(wrapper.get("nav").text()).toContain("项目台账");
       expect(wrapper.find('a[href="/projects"]').exists()).toBe(true);
+      wrapper.unmount();
+    }
+  });
+  it("shows notification records navigation only to owners", () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: "/", component: AppLayout },
+        { path: "/policies", component: { template: "<div />" } },
+        { path: "/projects", component: { template: "<div />" } },
+        { path: "/evaluation-rules", component: { template: "<div />" } },
+        { path: "/sources", component: { template: "<div />" } },
+        { path: "/notifications", component: { template: "<div />" } },
+        { path: "/profile", component: { template: "<div />" } },
+      ],
+    });
+
+    for (const [role, visible] of [["applicant_owner", true], ["reader", false]] as const) {
+      currentUser.value = { id: 1, login_name: "user", display_name: "User", roles: [role] };
+      const wrapper = mount(AppLayout, { global: { plugins: [router, ElementPlus] } });
+
+      expect(wrapper.find('a[href="/notifications"]').exists()).toBe(visible);
       wrapper.unmount();
     }
   });

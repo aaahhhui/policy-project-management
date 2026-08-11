@@ -6,6 +6,7 @@ import { currentUser, currentUserError, signOut } from "../auth/state";
 
 const router = useRouter();
 const canManageSources = computed(() => currentUser.value?.roles.includes("applicant_owner") ?? false);
+const canManageNotifications = computed(() => currentUser.value?.roles.includes("applicant_owner") ?? false);
 const logoutError = ref("");
 
 async function handleSignOut() {
@@ -37,6 +38,7 @@ async function handleSignOut() {
         <RouterLink to="/policies">政策中心</RouterLink>
         <RouterLink to="/evaluation-rules">评估规则</RouterLink>
         <RouterLink v-if="canManageSources" to="/sources">政策来源</RouterLink>
+        <RouterLink v-if="canManageNotifications" to="/notifications">通知记录</RouterLink>
         <RouterLink to="/profile">企业档案</RouterLink>
         <RouterLink to="/projects">项目台账</RouterLink>
       </nav>
@@ -57,5 +59,5 @@ async function handleSignOut() {
 .app-nav a.router-link-exact-active { color: #113a70; border-left-color: #e3b260; background: #eef5fa; font-weight: 700; }
 .app-content { padding: 2rem; }
 .logout-error { margin: 0; padding: 0.6rem 2rem; color: #9b1c1c; background: #fff1f0; font-size: 0.875rem; }
-@media (max-width: 720px) { .app-header { padding: 0 1rem; } .app-body { grid-template-columns: 1fr; } .app-nav { display: flex; gap: 0.5rem; padding: 0.5rem 1rem; border-right: 0; border-bottom: 1px solid #dbe5f0; } .app-nav a { margin: 0; } .app-content { padding: 1.25rem; } }
+@media (max-width: 720px) { .app-header { padding: 0 1rem; } .app-body { grid-template-columns: 1fr; } .app-nav { display: flex; flex-wrap: wrap; gap: 0.5rem; padding: 0.5rem 1rem; border-right: 0; border-bottom: 1px solid #dbe5f0; } .app-nav a { margin: 0; white-space: nowrap; } .app-content { min-width: 0; padding: 1.25rem; } }
 </style>
