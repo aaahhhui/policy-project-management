@@ -436,3 +436,9 @@
 - Chromium `390x844` fallback 已确认通知列表、详情安全快照与发送轨迹可读，且移动端隐藏手动重发；该结果不替代真实企业微信内置浏览器 UAT。
 - Docker Desktop 的用户级 CLI 已定位并用于独立 `stage4-wecom-verify` Compose 验收：MySQL 8.4、api、web、collector、evaluator、notifier、scheduler 全部健康，`/api/health` 为 `ok`；fresh `0001 -> 0008` 与 `0008 -> 0007 -> 0008` 迁移均通过。两个 MySQL session 的 claim 竞争只有一个赢家，stale claim 恢复后旧 token 无法覆盖；临时记录已清理。容器日志的 Webhook、Authorization、Cookie、私钥和 OpenAI 风格 key 模式均为 0。
 - 当前唯一外部门禁是实际企业微信 UAT：仍需要仅供本地秘密配置的测试 Webhook、手机可访问 HTTPS Demo 和专用测试账号。完整状态见 `docs/testing/2026-08-11-stage-4-wecom-notification-smoke-test.md`。
+
+## 30. 2026-08-12 Stage 4 真实企业微信通知详情验收
+
+- 测试群机器人已用本地秘密配置完成实际发送，通知记录达到 `succeeded`；Webhook 值未写入 Git、文档、审计或日志。
+- 企业微信内置浏览器 UAT 已确认：消息打开登录页，测试负责人账号密码登录后安全回跳至通知详情；页面正常，移动端不显示手动重发。
+- 隔离 MySQL 已导入公开企业档案（1）、经营主体（3）和广东工信厅来源（1）。由于没有采集真实政策或创建项目，政策详情与项目移动端只读 UAT 尚未覆盖，不能由通知详情验收替代；这是 Stage 4 合并前剩余的业务消息验收项。
