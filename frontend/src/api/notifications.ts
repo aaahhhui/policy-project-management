@@ -1,5 +1,4 @@
 import http from "./http";
-
 export type NotificationStatus = "pending" | "sending" | "retry_wait" | "succeeded" | "failed";
 
 export interface NotificationListItem {
@@ -32,4 +31,3 @@ export async function getNotification(id: number): Promise<NotificationDetail> {
 export async function retryNotification(id: number, expectedVersion: number): Promise<NotificationDetail> {
   return (await http.post<NotificationDetail>(`/notifications/${id}/retry`, { expected_version: expectedVersion })).data;
 }
-

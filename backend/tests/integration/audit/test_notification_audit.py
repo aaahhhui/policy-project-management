@@ -1,5 +1,4 @@
 from sqlalchemy import select
-
 from app.core.security import hash_password
 from app.modules.audit.models import AuditEvent
 from app.modules.auth.models import User
@@ -108,4 +107,3 @@ def test_denied_manual_retry_is_committed_independently_and_contains_no_payload(
         "attempted_action": "manual_retry",
         "code": "notification_retry_forbidden",
     }
-

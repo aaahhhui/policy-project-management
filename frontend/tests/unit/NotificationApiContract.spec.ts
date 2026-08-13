@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
 const { http } = vi.hoisted(() => ({ http: { get: vi.fn(), post: vi.fn() } }));
 
 vi.mock("../../src/api/http", () => ({ default: http }));
@@ -32,4 +31,3 @@ describe("notification API contract", () => {
     expect(http.post).toHaveBeenCalledWith("/notifications/19/retry", { expected_version: 7 });
   });
 });
-
