@@ -13,6 +13,7 @@ from app.modules.audit.models import AuditEvent
 from app.modules.audit.service import AuditService
 from app.modules.auth.models import User
 from app.modules.evaluations.models import PrimaryEntityDecision
+from app.modules.notifications.service import NotificationService
 from app.modules.policies.models import Policy
 from app.modules.projects.errors import (
     IdempotencyKeyReused,
@@ -232,6 +233,7 @@ class ProjectService:
             policy.id,
             changes={"project_id": project.id},
         )
+        NotificationService(self.db).enqueue_project_created(project)
         return ProjectQueryService(self.db).detail(project.id, actor=actor)
 
     def _ensure_sqlite_transaction(self) -> None:
@@ -471,6 +473,9 @@ class ProjectService:
             project.id,
             reason=reason,
             changes={"before": before_values, "after": after_values},
+        )
+        NotificationService(self.db).enqueue_project_first_status(
+            project, project.status
         )
         return ProjectQueryService(self.db).detail(project.id, actor=actor)
 

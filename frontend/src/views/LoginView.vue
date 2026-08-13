@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 
 import { isUnauthorizedError, login } from "../api/auth";
 import { clearCurrentUser } from "../auth/state";
+import { safeReturnPath } from "../router/safeReturn";
 
 const router = useRouter();
 const route = useRoute();
@@ -17,7 +18,7 @@ async function submit() {
   try {
     await login(form);
     clearCurrentUser();
-    const redirect = typeof route.query.redirect === "string" ? route.query.redirect : "/";
+    const redirect = safeReturnPath(route.query.redirect);
     await router.push(redirect);
   } catch (requestError) {
     error.value = isUnauthorizedError(requestError)

@@ -41,4 +41,20 @@ describe("ServiceUnavailableView", () => {
 
     expect(router.currentRoute.value.fullPath).toBe("/");
   });
+  it("rejects protocol-relative, loop, and unknown retry targets", async () => {
+    for (const target of ["//evil.example", "/login", "/service-unavailable", "/unknown"]) {
+      const router = createPolicyRouter({
+        history: createMemoryHistory(),
+        loadCurrentUser: async () => owner,
+      });
+      await router.push({ path: "/service-unavailable", query: { retry: target } });
+      const wrapper = mount(ServiceUnavailableView, { global: { plugins: [router] } });
+
+      await wrapper.get("button").trigger("click");
+      await flushPromises();
+
+      expect(router.currentRoute.value.fullPath).toBe("/");
+      wrapper.unmount();
+    }
+  });
 });

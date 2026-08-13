@@ -14,6 +14,8 @@ import EvaluationRulesView from "../views/EvaluationRulesView.vue";
 import EvaluationRuleDetailView from "../views/EvaluationRuleDetailView.vue";
 import ProjectLedgerView from "../views/ProjectLedgerView.vue";
 import ProjectDetailView from "../views/ProjectDetailView.vue";
+import NotificationRecordsView from "../views/NotificationRecordsView.vue";
+import { isSafeReturnPath } from "./safeReturn";
 
 type RouterOptions = {
   history?: RouterHistory;
@@ -41,6 +43,12 @@ export function createPolicyRouter(options: RouterOptions = {}) {
           { path: "policies/:id", name: "policy-detail", component: PolicyDetailView },
           { path: "projects", name: "projects", component: ProjectLedgerView },
           { path: "projects/:id", name: "project-detail", component: ProjectDetailView },
+          {
+            path: "notifications",
+            name: "notifications",
+            component: NotificationRecordsView,
+            meta: { requiredRole: "applicant_owner" },
+          },
           { path: "evaluation-rules", name: "evaluation-rules", component: EvaluationRulesView },
           { path: "evaluation-rules/:id", name: "evaluation-rule-detail", component: EvaluationRuleDetailView },
           {
@@ -66,9 +74,15 @@ export function createPolicyRouter(options: RouterOptions = {}) {
       return true;
     } catch (error) {
       if (isUnauthorizedError(error)) {
-        return { name: "login", query: { redirect: to.fullPath } };
+        return {
+          name: "login",
+          query: { redirect: isSafeReturnPath(to.fullPath) ? to.fullPath : "/" },
+        };
       }
-      return { name: "service-unavailable", query: { retry: to.fullPath } };
+      return {
+        name: "service-unavailable",
+        query: { retry: isSafeReturnPath(to.fullPath) ? to.fullPath : "/" },
+      };
     }
   });
   return router;

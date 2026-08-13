@@ -3,7 +3,16 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Enum, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    Enum,
+    ForeignKey,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin
@@ -29,7 +38,13 @@ class EvaluationRuleSet(Base, TimestampMixin):
 
 class EvaluationRuleVersion(Base, TimestampMixin):
     __tablename__ = "evaluation_rule_versions"
-    __table_args__ = (UniqueConstraint("rule_set_id", "version_number"),)
+    __table_args__ = (
+        UniqueConstraint("rule_set_id", "version_number"),
+        CheckConstraint(
+            "high_match_score_threshold BETWEEN 0 AND 100",
+            name="ck_evaluation_rule_high_match_threshold_range",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     rule_set_id: Mapped[int] = mapped_column(
@@ -42,6 +57,9 @@ class EvaluationRuleVersion(Base, TimestampMixin):
     hard_rules: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
     weighted_rules: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
     prompt_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    high_match_score_threshold: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="80"
+    )
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     published_by: Mapped[int | None] = mapped_column(
         ForeignKey("users.id"), nullable=True

@@ -15,6 +15,7 @@ from app.modules.projects.errors import (
     ProjectWriteForbidden,
 )
 from app.modules.audit.models import AuditEvent
+from app.modules.notifications.models import NotificationDelivery
 from app.modules.projects.models import Project, ProjectMember, ProjectStatusHistory
 from app.modules.projects.schemas import ProjectCreateInput, ProjectDetail
 from app.modules.projects.service import ProjectService
@@ -70,6 +71,16 @@ def test_conversion_creates_project_members_history_and_audits(db) -> None:
         "policy_converted_to_project",
     }
     assert db.scalar(select(func.count(AuditEvent.id))) == 2
+    delivery = db.scalar(select(NotificationDelivery))
+    assert delivery is not None
+    assert delivery.event_key == f"project:{result.id}:created"
+    assert delivery.status == "pending"
+    assert delivery.display_type == "政策转项目"
+    assert delivery.message_snapshot == {
+        "primary_entity_legal_name": "Entity One",
+        "liaison_display_name": "Liaison",
+        "deadline_on": date(2026, 8, 6).isoformat(),
+    }
     assert (
         policy.current_conclusion,
         policy.current_conclusion_source,
@@ -91,11 +102,13 @@ def test_conversion_remains_atomic_until_the_caller_commits(db) -> None:
     assert db.scalar(select(func.count(Project.id))) == 1
     assert db.scalar(select(func.count(ProjectStatusHistory.id))) == 1
     assert db.scalar(select(func.count(AuditEvent.id))) == 2
+    assert db.scalar(select(func.count(NotificationDelivery.id))) == 1
     db.rollback()
     with Session(db.get_bind()) as verifier:
         assert verifier.scalar(select(func.count(Project.id))) == 0
         assert verifier.scalar(select(func.count(ProjectStatusHistory.id))) == 0
         assert verifier.scalar(select(func.count(AuditEvent.id))) == 0
+        assert verifier.scalar(select(func.count(NotificationDelivery.id))) == 0
 
 
 def test_audit_failure_rolls_back_every_conversion_write(db) -> None:
@@ -123,6 +136,7 @@ def test_audit_failure_rolls_back_every_conversion_write(db) -> None:
         assert verifier.scalar(select(func.count(Project.id))) == 0
         assert verifier.scalar(select(func.count(ProjectStatusHistory.id))) == 0
         assert verifier.scalar(select(func.count(AuditEvent.id))) == 0
+        assert verifier.scalar(select(func.count(NotificationDelivery.id))) == 0
 
 
 def test_conversion_and_equivalent_retry_return_conversion_detail_contract(db) -> None:
@@ -288,6 +302,7 @@ def test_existing_project_returns_business_conflict(db) -> None:
         )
 
     assert exc_info.value.public_context == {"project_id": existing.id}
+    assert db.scalar(select(func.count(NotificationDelivery.id))) == 0
 
 
 def test_equivalent_retry_returns_one_project_and_one_history(db) -> None:
@@ -313,6 +328,7 @@ def test_equivalent_retry_returns_one_project_and_one_history(db) -> None:
     assert db.scalar(select(func.count(Project.id))) == 1
     assert db.scalar(select(func.count(ProjectStatusHistory.id))) == 1
     assert db.scalar(select(func.count(AuditEvent.id))) == 2
+    assert db.scalar(select(func.count(NotificationDelivery.id))) == 1
 
 
 @pytest.mark.parametrize("actor_kind", ["non_owner", "inactive_owner"])

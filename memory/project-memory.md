@@ -406,3 +406,39 @@
 - 桌面权限人工冒烟已覆盖：负责人从已确认政策创建项目、过期截止日提示、项目详情跳转、负责人编辑和对接人改派、主申报企业更正及审计；对接人进度更新、状态前进流转与 `succeeded -> submitted` 状态更正审计；member、reader、unrelated 只读访问且不展示写入控件。并发唯一性由同一 MySQL 的双会话契约证明。
 - 移动端真实 Chromium 视口 `390x844` 已验收：项目事实、变更历史和审计可读，维护、状态流转、状态更正控件均隐藏。最终完整证据见 `docs/testing/2026-08-03-stage-3-project-ledger-smoke-test.md`。
 - 本阶段范围仍严格排除企业微信通知、企业档案编辑、新来源/五来源扩展、备份恢复和正式生产迁移；这些不是本次验收或合并条件。
+
+## 27. 2026-08-11 Stage 3 合并收口与 Stage 4 规划入口
+
+- Stage 3 PR `#4` 已合并到 `main`，远程与本地主工作树均指向合并提交 `57fb3e6 Merge pull request #4 from aaahhhui/codex/stage3-policy-project-ledger`。Stage 3 功能分支和隔离工作树暂时保留，未执行删除。
+- 合并后在主工作树完成 fresh 回归：后端 `392 passed / 2 skipped`，前端 `29` 个测试文件 / `132` 项测试通过；隔离 Compose 项目 `stage3-ledger-verify` 的 MySQL、collector、evaluator、scheduler 均健康，API `/api/health` 返回 `status=ok`。主工作树仅保留既有未跟踪 `.pnpm-store/` 本地缓存。
+- 下一阶段进入 Stage 4 规划，优先主题为“企业微信群机器人通知闭环”。规划必须先澄清是仅覆盖 Stage 3 延期的 `CONV-06`、`PROJ-11`、`PROJ-12`，还是同时纳入高匹配政策、评估完成和来源连续异常等既有 P0 场景；在设计规格经用户确认前不进入实现。
+- Stage 4 设计必须覆盖异步发送、失败重试、同一业务事件只成功通知一次、通知记录与可读失败摘要、Webhook 密钥不入库/不入日志、政策或项目详情链接，以及企业微信内置浏览器打开登录页和详情页的验收边界。
+- Stage 4 规划不包含企业微信登录或自建应用、企业档案编辑、新来源/五来源扩展、备份恢复演练和正式生产迁移；若后续需要这些能力，必须单独设计和评审。
+
+## 28. 2026-08-11 Stage 4 企业微信群机器人通知规格与实施计划
+
+- Stage 4 书面设计已由用户批准并单独提交为 `4afeadd docs: design stage 4 wecom notifications`；规格文件为 `docs/superpowers/specs/2026-08-11-stage-4-wecom-notification-design.md`。
+- 范围确认覆盖六类通知：高匹配政策或评估结果变更、政策评估完成、政策转项目、项目首次已提交、项目首次成功、来源连续异常；不覆盖备份失败。高匹配与评估完成在同一评估批次互斥展示，避免重复群消息。
+- 评估首次可用批次必通知；后续仅当汇总结论、高匹配状态、任一经营主体 `match_level` 或主体集合变化时通知。评分未跨阈值、依据、风险或文案变化不触发。规则版本新增 `high_match_score_threshold`，范围 0—100，默认 80，并随评估批次快照固化。
+- 通知采用事务型 Outbox：业务数据、现有历史/审计和唯一通知记录同一事务写入；独立 notifier worker 使用数据库领取、claim token、超时恢复和外部事务 HTTP 调用。`audit_events` 不作为发送队列。
+- 同一事件以唯一事件键保证本地幂等成功；Webhook 没有业务幂等键，采用“至少一次外部投递 + 本地幂等成功”。企业微信已接收而本地提交前进程崩溃的极端窗口可能重复，不采用发送前标成功的漏发方案。
+- 自动发送最多四次：首次、1 分钟、5 分钟、30 分钟。最终失败后申报负责人可手动重发同一记录，开启新发送轮次但不创建新事件；永久配置/明确渠道拒绝直接失败。通知记录与尝试历史只保存稳定错误码和中文安全摘要。
+- 来源 `failed` 和 `partial_failed` 均累计；仅 `succeeded` 重置。每个连续失败段第 3 次通知一次，第 4 次及以后不重复；成功后新的连续三次可再次通知。
+- Webhook 仅从服务端环境或秘密配置读取，禁止进入数据库、前端、API、审计、日志、文档实例或 Git。群消息使用受控摘要和详情链接；企业微信内置浏览器未登录时应账号密码登录并安全回跳到正确政策或项目详情。
+- 新增负责人专用 `/notifications` 列表、详情、尝试历史和最终失败手动重发；其他角色服务端拒绝。移动端不提供重发，项目详情继续只读。真实企业微信手机端 UAT 必须验证登录回跳和详情，不以普通 Chromium 移动视口替代。
+- Stage 4 启用前的历史项目、评估和采集事件不补发；迁移只初始化规则阈值与来源健康状态。实施计划为 `docs/superpowers/plans/2026-08-11-stage-4-wecom-notification.md`，必须严格 TDD、频繁提交，并在真实 Webhook/HTTPS Demo/测试账号准备后完成 Docker、MySQL、安全扫描和手机 UAT。
+
+## 29. 2026-08-11 Stage 4 本地实现与待收口验收
+
+- 六类批准事件、事务型通知记录、WeCom 发送适配器与 notifier、负责人专用记录/手动重发 API，以及 `/notifications` 界面和安全登录回跳均已按 TDD 实现；所有外部投递保持“至少一次”，本地成功以唯一事件键幂等。
+- 本地完整验证基线：后端 `454 passed, 2 skipped`，Ruff 通过，mypy `85` 个源文件通过；前端 `31` 个测试文件、`141` 项测试通过，Vue 类型检查与 Vite 生产构建通过。Vite 仅保留既有第三方 PURE 注释和主 chunk 超过 500 kB 的非阻断警告。
+- 独立代码审查发现来源任务按创建 ID 截断会漏记“较早创建、较晚完成”的失败结果，已以 TDD 修复为终态任务仅处理一次且乱序完成仍计入；复审无 Critical 或 Important 遗留问题。
+- Chromium `390x844` fallback 已确认通知列表、详情安全快照与发送轨迹可读，且移动端隐藏手动重发；该结果不替代真实企业微信内置浏览器 UAT。
+- Docker Desktop 的用户级 CLI 已定位并用于独立 `stage4-wecom-verify` Compose 验收：MySQL 8.4、api、web、collector、evaluator、notifier、scheduler 全部健康，`/api/health` 为 `ok`；fresh `0001 -> 0008` 与 `0008 -> 0007 -> 0008` 迁移均通过。两个 MySQL session 的 claim 竞争只有一个赢家，stale claim 恢复后旧 token 无法覆盖；临时记录已清理。容器日志的 Webhook、Authorization、Cookie、私钥和 OpenAI 风格 key 模式均为 0。
+- 当前唯一外部门禁是实际企业微信 UAT：仍需要仅供本地秘密配置的测试 Webhook、手机可访问 HTTPS Demo 和专用测试账号。完整状态见 `docs/testing/2026-08-11-stage-4-wecom-notification-smoke-test.md`。
+
+## 30. 2026-08-12 Stage 4 真实企业微信通知详情验收
+
+- 测试群机器人已用本地秘密配置完成实际发送，通知记录达到 `succeeded`；Webhook 值未写入 Git、文档、审计或日志。
+- 企业微信内置浏览器 UAT 已确认：消息打开登录页，测试负责人账号密码登录后安全回跳至通知详情；页面正常，移动端不显示手动重发。
+- 隔离 MySQL 已导入公开企业档案（1）、经营主体（3）和广东工信厅来源（1）。由于没有采集真实政策或创建项目，政策详情与项目移动端只读 UAT 尚未覆盖，不能由通知详情验收替代；这是 Stage 4 合并前剩余的业务消息验收项。

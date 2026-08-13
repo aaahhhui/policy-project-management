@@ -65,6 +65,15 @@ services:
       mysql:
         condition: service_healthy
 
+  notifier:
+    <<: *worker-runtime
+    build: ./backend
+    command: python -m workers.notifier
+    env_file: .env
+    depends_on:
+      mysql:
+        condition: service_healthy
+
   scheduler:
     <<: *worker-runtime
     build: ./backend

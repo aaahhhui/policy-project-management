@@ -1,23 +1,11 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { safeReturnPath } from "../router/safeReturn";
 
 const route = useRoute();
 const router = useRouter();
-const retryTarget = computed(() => safeRetryTarget(route.query.retry));
-
-function safeRetryTarget(value: unknown): string {
-  if (typeof value !== "string" || !value.startsWith("/")) return "/";
-  if (
-    value.startsWith("//") ||
-    value.startsWith("/\\") ||
-    value === "/login" ||
-    value.startsWith("/service-unavailable")
-  ) {
-    return "/";
-  }
-  return value;
-}
+const retryTarget = computed(() => safeReturnPath(route.query.retry));
 
 async function retry() {
   await router.push(retryTarget.value);

@@ -25,6 +25,8 @@ from app.modules.evaluations.schemas import (
     EvaluationResult,
     PrimaryEntityInput,
 )
+from app.modules.notifications.events import evaluation_notification_event
+from app.modules.notifications.service import NotificationService
 from app.modules.policies.models import Policy, PolicyVersion
 from app.modules.profiles.models import BusinessEntity
 from app.modules.profiles.service import ENTITY_ORDER
@@ -66,6 +68,9 @@ class EvaluationService:
                 "hard_rules": rule_version.hard_rules,
                 "weighted_rules": rule_version.weighted_rules,
                 "prompt_version": rule_version.prompt_version,
+                "high_match_score_threshold": (
+                    rule_version.high_match_score_threshold
+                ),
             }
         )
         settings = get_settings()
@@ -314,6 +319,12 @@ class EvaluationService:
                         policy.conclusion_confirmed = False
                         policy.current_conclusion_source = "system_suggestion"
                         policy.conclusion_confirmed_at = None
+                self.db.flush()
+                notification_event = evaluation_notification_event(
+                    self.db, current_batch
+                )
+                if notification_event is not None:
+                    NotificationService(self.db).enqueue(notification_event)
             completed = self.db.get(EvaluationBatch, batch.id)
             if completed is None:
                 raise ValueError(f"evaluation batch {batch.id} was not found")

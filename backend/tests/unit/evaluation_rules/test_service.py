@@ -69,3 +69,35 @@ def test_published_version_is_immutable_and_audited(
         "evaluation_rule_draft_created",
         "evaluation_rule_published",
     ]
+
+
+def test_rule_versions_default_high_match_threshold_to_80(
+    db: Session, seeded_owner: User
+) -> None:
+    payload = rule_payload(weights=[60, 40])
+    assert payload.high_match_score_threshold == 80
+
+    version = EvaluationRuleService(db).create_draft(None, payload, seeded_owner.id)
+
+    assert version.high_match_score_threshold == 80
+
+
+def test_rule_version_persists_an_explicit_high_match_threshold(
+    db: Session, seeded_owner: User
+) -> None:
+    data = rule_payload(weights=[60, 40]).model_dump()
+    data["high_match_score_threshold"] = 73
+    payload = EvaluationRuleDraftInput.model_validate(data)
+
+    version = EvaluationRuleService(db).create_draft(None, payload, seeded_owner.id)
+
+    assert version.high_match_score_threshold == 73
+
+
+@pytest.mark.parametrize("threshold", [-1, 101])
+def test_rule_input_rejects_high_match_threshold_outside_range(threshold: int) -> None:
+    data = rule_payload(weights=[60, 40]).model_dump()
+    data["high_match_score_threshold"] = threshold
+
+    with pytest.raises(ValueError):
+        EvaluationRuleDraftInput.model_validate(data)

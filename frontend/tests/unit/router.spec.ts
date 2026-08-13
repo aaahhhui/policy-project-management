@@ -48,6 +48,19 @@ describe("policy router", () => {
     }
   });
 
+  it("allows only an owner to open notification records", async () => {
+    for (const [user, expected] of [[owner, "notifications"], [reader, "home"]] as const) {
+      const router = createPolicyRouter({
+        history: createMemoryHistory(),
+        loadCurrentUser: async () => user,
+      });
+
+      await router.push("/notifications");
+
+      expect(router.currentRoute.value.name).toBe(expected);
+    }
+  });
+
   it("allows every authenticated role to view the project ledger and detail", async () => {
     for (const user of [owner, reader]) {
       const router = createPolicyRouter({ history: createMemoryHistory(), loadCurrentUser: async () => user });

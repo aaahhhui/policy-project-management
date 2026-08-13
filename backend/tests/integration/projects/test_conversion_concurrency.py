@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.db.base import Base
 from app.modules.audit.models import AuditEvent
 from app.modules.auth.models import User
+from app.modules.notifications.models import NotificationDelivery
 from app.modules.projects.errors import PolicyAlreadyConverted
 from app.modules.projects.models import Project, ProjectStatusHistory
 from app.modules.projects.schemas import ProjectCreateInput
@@ -119,6 +120,7 @@ def test_two_sessions_map_an_overlapping_policy_unique_race_to_business_conflict
             assert verifier.scalar(select(func.count(Project.id))) == 1
             assert verifier.scalar(select(func.count(ProjectStatusHistory.id))) == 1
             assert verifier.scalar(select(func.count(AuditEvent.id))) == 2
+            assert verifier.scalar(select(func.count(NotificationDelivery.id))) == 1
     finally:
         event.remove(engine, "after_cursor_execute", pause_second_after_project_absence_check)
         event.remove(engine, "before_cursor_execute", record_second_project_insert)

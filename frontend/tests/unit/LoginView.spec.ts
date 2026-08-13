@@ -1,4 +1,4 @@
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import ElementPlus from "element-plus";
 import { describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
@@ -17,7 +17,14 @@ vi.mock("../../src/api/auth", () => ({
 function testRouter() {
   return createRouter({
     history: createMemoryHistory(),
-    routes: [{ path: "/", component: { template: "<div />" } }],
+    routes: [
+      { path: "/", component: { template: "<div />" } },
+      { path: "/policies/:id", component: { template: "<div />" } },
+      { path: "/projects/:id", component: { template: "<div />" } },
+      { path: "/notifications", component: { template: "<div />" } },
+      { path: "/login", component: LoginView },
+      { path: "/service-unavailable", component: { template: "<div />" } },
+    ],
   });
 }
 
@@ -59,5 +66,41 @@ describe("LoginView", () => {
     await wrapper.get("form").trigger("submit");
 
     expect(wrapper.text()).toContain("服务暂时不可用，请稍后重试");
+  });
+  it("returns only to whitelisted relative business paths after login", async () => {
+    vi.mocked(login).mockResolvedValue();
+    for (const target of ["/policies/7", "/projects/8", "/notifications?status=failed"]) {
+      const router = testRouter();
+      await router.push({ path: "/login", query: { redirect: target } });
+      const wrapper = mount(LoginView, { global: { plugins: [router, ElementPlus] } });
+
+      await wrapper.get("form").trigger("submit");
+      await flushPromises();
+
+      expect(router.currentRoute.value.fullPath).toBe(target);
+      wrapper.unmount();
+    }
+  });
+
+  it("rejects external, protocol-relative, loop, and unknown return targets", async () => {
+    vi.mocked(login).mockResolvedValue();
+    const unsafe = [
+      "https://evil.example/steal",
+      "//evil.example/steal",
+      "/login?redirect=/login",
+      "/service-unavailable?retry=/service-unavailable",
+      "/unknown-admin",
+    ];
+    for (const target of unsafe) {
+      const router = testRouter();
+      await router.push({ path: "/login", query: { redirect: target } });
+      const wrapper = mount(LoginView, { global: { plugins: [router, ElementPlus] } });
+
+      await wrapper.get("form").trigger("submit");
+      await flushPromises();
+
+      expect(router.currentRoute.value.fullPath).toBe("/");
+      wrapper.unmount();
+    }
   });
 });
