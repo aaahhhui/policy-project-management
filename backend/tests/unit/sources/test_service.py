@@ -14,8 +14,11 @@ def test_new_unrecognized_source_is_pending_and_records_scalar_audit_ids(db, see
     )
 
     assert source.name == "Example source"
+    assert source.entry_url == "https://example.com/"
     assert source.adapter_status == "pending"
     assert source.adapter_key is None
+    assert source.recognition_status == "pending_verification"
+    assert source.version == 1
     assert source.created_by == seeded_owner.id
     assert source.updated_by == seeded_owner.id
 
@@ -147,7 +150,9 @@ def test_gdii_seed_is_idempotent_and_ready_with_exact_channels(db, seeded_owner)
     assert source is not None
     assert source.adapter_key == "gdii"
     assert source.adapter_status == "ready"
-    assert source.home_url == GDII_SOURCE["home_url"]
+    assert source.entry_url == GDII_SOURCE["home_url"]
+    assert source.recognition_status == "pending_verification"
+    assert source.version == 1
     assert [(channel.code, channel.list_url) for channel in source.channels] == [
         ("notices", "https://gdii.gd.gov.cn/zwgk/tzgg1011/index.html"),
         ("funds", "https://gdii.gd.gov.cn/xmzj1033/index.html"),

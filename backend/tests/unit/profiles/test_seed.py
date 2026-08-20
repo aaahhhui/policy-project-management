@@ -41,6 +41,8 @@ def test_seed_preserves_full_source_json_and_shenzhen_candidate_status(db, seed_
     assert shenzhen.data == source["business_entities"][2]
     assert shenzhen.verification_status == "candidate_pending_business_license_review"
     assert shenzhen.verification_status != "confirmed"
+    assert shared.version == 1
+    assert shenzhen.version == 1
 
 
 def test_seed_is_idempotent(db, seed_path):
@@ -49,6 +51,8 @@ def test_seed_is_idempotent(db, seed_path):
 
     assert len(list(db.scalars(select(EnterpriseProfile)))) == 1
     assert len(list(db.scalars(select(BusinessEntity)))) == 3
+    assert db.scalar(select(EnterpriseProfile.version)) == 1
+    assert list(db.scalars(select(BusinessEntity.version).order_by(BusinessEntity.id))) == [1, 1, 1]
 
 
 def test_seed_rolls_back_every_change_when_one_entity_is_invalid(db, tmp_path):

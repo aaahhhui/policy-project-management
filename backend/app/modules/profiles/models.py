@@ -16,6 +16,9 @@ class EnterpriseProfile(Base, TimestampMixin):
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     verification_status: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
 
 
 class BusinessEntity(Base, TimestampMixin):
@@ -26,3 +29,6 @@ class BusinessEntity(Base, TimestampMixin):
     legal_name: Mapped[str] = mapped_column(String(255), nullable=False)
     data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     verification_status: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
