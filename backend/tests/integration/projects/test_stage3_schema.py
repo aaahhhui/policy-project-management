@@ -14,7 +14,10 @@ from sqlalchemy.pool import StaticPool
 from app.core.config import get_settings
 
 
-RECONCILIATION_REVISION = "0007_reconcile_eval_constraint"
+def _head_revision(config: Config) -> str:
+    head = ScriptDirectory.from_config(config).get_current_head()
+    assert head is not None
+    return head
 
 
 @pytest.fixture
@@ -262,9 +265,7 @@ def test_historical_stage2_constraint_is_preserved_then_reconciled_at_head(
             check["name"]
             for check in inspect(connection).get_check_constraints("evaluation_batches")
         }
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            RECONCILIATION_REVISION
-        )
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == _head_revision(config)
         assert "evaluation_status_v3_code" in head_checks
         assert "evaluation_status_v2_code" not in head_checks
 
@@ -339,9 +340,7 @@ def test_reconciliation_accepts_schema_already_using_v3_constraint_and_legacy_da
             check["name"]
             for check in inspect(connection).get_check_constraints("evaluation_batches")
         }
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            RECONCILIATION_REVISION
-        )
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == _head_revision(config)
         assert "evaluation_status_v3_code" in reconciled_checks
         repaired = connection.execute(
             text("SELECT submitted_on, result_on, created_at FROM projects WHERE id = 1")

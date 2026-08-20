@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date as calendar_date, datetime
 from html.parser import HTMLParser
 from typing import Literal
 from urllib.parse import urlsplit
@@ -119,9 +119,7 @@ class SourceRecognizer:
         client: httpx.Client | None = None,
         resolver: Resolver = socket_resolver,
     ) -> None:
-        self._client = client or httpx.Client(
-            follow_redirects=False, timeout=httpx.Timeout(5.0, connect=2.0)
-        )
+        self._client = client
         self._resolver = resolver
 
     def recognize(self, entry_url: str) -> RecognitionResult:
@@ -207,9 +205,7 @@ class SourceRecognizer:
             and (host.endswith(".gov") or host.endswith(".gov.cn"))
             and "/policy/" in path.lower()
             and title
-            and len(date) == 10
-            and date[4] == "-"
-            and date[7] == "-"
+            and _is_iso_calendar_date(date)
         )
 
     @staticmethod
@@ -217,3 +213,10 @@ class SourceRecognizer:
         return RecognitionResult(
             status="rejected", kind=None, summary=_REJECTED_SUMMARY, previewed_at=None, adapter_key=None
         )
+
+
+def _is_iso_calendar_date(value: str) -> bool:
+    try:
+        return calendar_date.fromisoformat(value).isoformat() == value
+    except ValueError:
+        return False

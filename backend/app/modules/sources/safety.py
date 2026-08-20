@@ -3,9 +3,12 @@ from __future__ import annotations
 import ipaddress
 import socket
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
+from typing import Iterator
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
+import httpcore
 import httpx
 
 Resolver = Callable[[str], list[str]]
@@ -24,6 +27,48 @@ class SafeHttpResponse:
     final_url: str
     content_type: str
     body: bytes
+
+
+@dataclass(frozen=True)
+class _FetchedPublicUrl:
+    response: SafeHttpResponse | None
+    is_redirect: bool
+    location: str | None
+
+
+class PinnedNetworkBackend(httpcore.SyncBackend):
+    """Connect to the validated address while HTTP keeps the original host and SNI."""
+
+    def __init__(self, address: str) -> None:
+        self._address = address
+
+    def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options=None,
+    ):
+        del host
+        return super().connect_tcp(
+            self._address,
+            port,
+            timeout=timeout,
+            local_address=local_address,
+            socket_options=socket_options,
+        )
+
+
+class _PinnedHttpTransport(httpx.HTTPTransport):
+    def __init__(self, address: str) -> None:
+        super().__init__(trust_env=False, retries=0)
+        self._pool.close()
+        self._pool = httpcore.ConnectionPool(
+            max_connections=1,
+            max_keepalive_connections=0,
+            network_backend=PinnedNetworkBackend(address),
+        )
 
 
 def canonicalize_public_http_url(value: str) -> str:
@@ -59,8 +104,11 @@ def canonicalize_public_http_url(value: str) -> str:
 
 
 def assert_public_destination(url: str, resolver: Resolver) -> None:
-    canonical_url = canonicalize_public_http_url(url)
-    host = urlsplit(canonical_url).hostname
+    _public_addresses(url, resolver)
+
+
+def _public_addresses(url: str, resolver: Resolver) -> list[str]:
+    host = urlsplit(canonicalize_public_http_url(url)).hostname
     assert host is not None
     try:
         answers = resolver(host)
@@ -69,6 +117,7 @@ def assert_public_destination(url: str, resolver: Resolver) -> None:
         raise UnsafePublicUrl(_UNREACHABLE_URL_MESSAGE) from None
     if not addresses or any(not _is_public_address(address) for address in addresses):
         raise UnsafePublicUrl(_UNREACHABLE_URL_MESSAGE)
+    return [str(address) for address in addresses]
 
 
 def safe_redirect_target(current_url: str, location: str, resolver: Resolver) -> str:
@@ -110,23 +159,80 @@ def socket_resolver(host: str) -> list[str]:
     return list({address for result in results if isinstance(address := result[4][0], str)})
 
 
-def inspect_public_url(entry_url: str, client: httpx.Client, resolver: Resolver) -> SafeHttpResponse:
+def inspect_public_url(
+    entry_url: str, client: httpx.Client | None, resolver: Resolver
+) -> SafeHttpResponse:
     first = canonicalize_public_http_url(entry_url)
-    assert_public_destination(first, resolver)
-    headers = {"Accept": "application/atom+xml, application/rss+xml, text/html;q=0.9"}
     try:
-        response = client.get(first, headers=headers)
-        if response.is_redirect:
-            target = safe_redirect_target(first, response.headers.get("location", ""), resolver)
-            response = client.get(target, headers=headers)
-        if response.is_redirect or response.status_code >= 400:
+        initial = _fetch_public_url(first, client, resolver)
+        if initial.is_redirect:
+            target = safe_redirect_target(first, initial.location or "", resolver)
+            redirected = _fetch_public_url(target, client, resolver)
+            if redirected.is_redirect:
+                raise UnsafePublicUrl(_UNREACHABLE_URL_MESSAGE)
+            assert redirected.response is not None
+            return redirected.response
+        if initial.response is None:
             raise UnsafePublicUrl(_UNREACHABLE_URL_MESSAGE)
     except UnsafePublicUrl:
         raise
     except httpx.HTTPError:
         raise UnsafePublicUrl(_UNREACHABLE_URL_MESSAGE) from None
-    return SafeHttpResponse(
-        final_url=canonicalize_public_http_url(str(response.url)),
-        content_type=response.headers.get("content-type", ""),
-        body=response.content[:_MAX_RESPONSE_BYTES],
-    )
+    return initial.response
+
+
+def _fetch_public_url(
+    url: str, client: httpx.Client | None, resolver: Resolver
+) -> _FetchedPublicUrl:
+    addresses = _public_addresses(url, resolver)
+    if client is not None:
+        return _stream_public_response(client, url)
+    with _pinned_client(addresses[0]) as pinned_client:
+        return _stream_public_response(pinned_client, url)
+
+
+@contextmanager
+def _pinned_client(address: str) -> Iterator[httpx.Client]:
+    transport = _PinnedHttpTransport(address)
+    with httpx.Client(
+        transport=transport,
+        follow_redirects=False,
+        timeout=httpx.Timeout(5.0, connect=2.0),
+        trust_env=False,
+    ) as client:
+        yield client
+
+
+def _stream_public_response(client: httpx.Client, url: str) -> _FetchedPublicUrl:
+    headers = {"Accept": "application/atom+xml, application/rss+xml, text/html;q=0.9"}
+    with client.stream("GET", url, headers=headers, follow_redirects=False) as response:
+        if response.is_redirect:
+            return _FetchedPublicUrl(
+                response=None,
+                is_redirect=True,
+                location=response.headers.get("location"),
+            )
+        if response.status_code >= 400:
+            raise UnsafePublicUrl(_UNREACHABLE_URL_MESSAGE)
+        content_length = response.headers.get("content-length")
+        if content_length is not None:
+            try:
+                declared_size = int(content_length)
+            except ValueError:
+                raise UnsafePublicUrl(_UNREACHABLE_URL_MESSAGE) from None
+            if declared_size < 0 or declared_size > _MAX_RESPONSE_BYTES:
+                raise UnsafePublicUrl(_UNREACHABLE_URL_MESSAGE)
+        body = bytearray()
+        for chunk in response.iter_bytes():
+            if len(body) + len(chunk) > _MAX_RESPONSE_BYTES:
+                raise UnsafePublicUrl(_UNREACHABLE_URL_MESSAGE)
+            body.extend(chunk)
+        return _FetchedPublicUrl(
+            response=SafeHttpResponse(
+                final_url=url,
+                content_type=response.headers.get("content-type", ""),
+                body=bytes(body),
+            ),
+            is_redirect=False,
+            location=None,
+        )

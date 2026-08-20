@@ -105,7 +105,7 @@ def test_mysql_policy_version_ddl_uses_longtext() -> None:
             PolicySource.__table__,
             {
                 "name": "source",
-                "home_url": "https://example.test",
+                "entry_url": "https://example.test",
                 "adapter_status": "not-a-stable-code",
                 "is_enabled": True,
                 "created_by": -1,

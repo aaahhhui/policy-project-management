@@ -103,6 +103,25 @@ def test_recognizer_keeps_unsupported_public_html_pending_verification() -> None
     assert "General agency homepage" not in result.summary
 
 
+def test_recognizer_keeps_policy_document_with_invalid_calendar_date_pending_verification() -> None:
+    recognizer = _recognizer(
+        lambda request: httpx.Response(
+            200,
+            content=(
+                b"<html><head><title>Enterprise support guide</title></head>"
+                b"<body><time datetime=\"2026-02-30\"></time></body></html>"
+            ),
+            headers={"content-type": "text/html"},
+        )
+    )
+
+    result = recognizer.recognize("https://example.gov/policy/42")
+
+    assert result.status == "pending_verification"
+    assert result.kind is None
+    assert result.adapter_key is None
+
+
 @pytest.mark.parametrize(
     "url",
     ["ftp://example.gov/feed.xml", "https://127.0.0.1/feed.xml"],
