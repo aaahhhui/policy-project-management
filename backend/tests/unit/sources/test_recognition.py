@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from app.modules.sources.recognition import SourceRecognizer
+from app.modules.sources.safety import SafeHttpResponse, UnsafePublicUrl
 
 
 def public_dns(_: str) -> list[str]:
@@ -11,8 +12,19 @@ def public_dns(_: str) -> list[str]:
 
 
 def _recognizer(handler) -> SourceRecognizer:
-    transport = httpx.MockTransport(handler)
-    return SourceRecognizer(client=httpx.Client(transport=transport), resolver=public_dns)
+    def fetcher(entry_url: str, resolver) -> SafeHttpResponse:
+        del resolver
+        try:
+            response = handler(httpx.Request("GET", entry_url))
+        except httpx.HTTPError as error:
+            raise UnsafePublicUrl("network request failed") from error
+        return SafeHttpResponse(
+            final_url=entry_url,
+            content_type=response.headers.get("content-type", ""),
+            body=response.content,
+        )
+
+    return SourceRecognizer(fetcher=fetcher, resolver=public_dns)
 
 
 @pytest.mark.parametrize(
@@ -127,7 +139,7 @@ def test_recognizer_keeps_policy_document_with_invalid_calendar_date_pending_ver
     ["ftp://example.gov/feed.xml", "https://127.0.0.1/feed.xml"],
 )
 def test_recognizer_rejects_unsafe_or_unsupported_url_without_details(url: str) -> None:
-    recognizer = _recognizer(lambda request: pytest.fail(f"unexpected request to {request.url}"))
+    recognizer = SourceRecognizer()
 
     result = recognizer.recognize(url)
 
@@ -147,3 +159,9 @@ def test_recognizer_rejects_inaccessible_response_without_exposing_error() -> No
     assert result.summary == "Unable to safely inspect this public URL"
     assert "Authorization" not in result.summary
     assert "token=" not in result.summary
+
+
+def test_recognizer_does_not_allow_generic_http_client_injection() -> None:
+    with httpx.Client() as client:
+        with pytest.raises(TypeError):
+            SourceRecognizer(client=client)

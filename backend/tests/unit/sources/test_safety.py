@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import gzip
 
 import pytest
 
@@ -92,7 +93,7 @@ def test_pinned_network_backend_connects_only_the_validated_address(monkeypatch)
     assert calls == [("93.184.216.34", 443)]
 
 
-def test_inspect_public_url_rejects_oversized_content_length_before_streaming() -> None:
+def test_inspect_public_url_rejects_oversized_content_length_before_streaming(monkeypatch) -> None:
     class Response:
         is_redirect = False
         status_code = 200
@@ -111,11 +112,18 @@ def test_inspect_public_url_rejects_oversized_content_length_before_streaming() 
         def stream(self, *args, **kwargs):
             yield Response()
 
+    @contextmanager
+    def pinned_client(address: str):
+        assert address == "93.184.216.34"
+        yield Client()
+
+    monkeypatch.setattr(safety, "_pinned_client", pinned_client)
+
     with pytest.raises(UnsafePublicUrl, match="URL destination is not publicly reachable"):
-        inspect_public_url("https://source.example/feed", Client(), lambda _: ["93.184.216.34"])
+        inspect_public_url("https://source.example/feed", lambda _: ["93.184.216.34"])
 
 
-def test_inspect_public_url_stops_reading_when_stream_exceeds_byte_limit() -> None:
+def test_inspect_public_url_stops_reading_when_stream_exceeds_byte_limit(monkeypatch) -> None:
     chunks_read: list[int] = []
 
     class Response:
@@ -139,8 +147,15 @@ def test_inspect_public_url_stops_reading_when_stream_exceeds_byte_limit() -> No
         def stream(self, *args, **kwargs):
             yield Response()
 
+    @contextmanager
+    def pinned_client(address: str):
+        assert address == "93.184.216.34"
+        yield Client()
+
+    monkeypatch.setattr(safety, "_pinned_client", pinned_client)
+
     with pytest.raises(UnsafePublicUrl, match="URL destination is not publicly reachable"):
-        inspect_public_url("https://source.example/feed", Client(), lambda _: ["93.184.216.34"])
+        inspect_public_url("https://source.example/feed", lambda _: ["93.184.216.34"])
 
     assert chunks_read == [131072, 1]
 
@@ -179,7 +194,42 @@ def test_inspect_public_url_pins_each_redirect_request_to_its_validated_address(
 
     monkeypatch.setattr(safety, "_pinned_client", pinned_client)
 
-    response = inspect_public_url("https://source.example/feed", None, resolver)
+    response = inspect_public_url("https://source.example/feed", resolver)
 
     assert response.final_url == "https://redirect.example/policy"
     assert addresses == ["93.184.216.34", "1.1.1.1"]
+
+
+def test_inspect_public_url_rejects_compressed_response_before_decoding(monkeypatch) -> None:
+    requested_headers: list[dict[str, str]] = []
+    compressed_bomb = gzip.compress(b"x" * (131_073 * 8))
+    assert len(compressed_bomb) < 131_072
+
+    class Response:
+        is_redirect = False
+        status_code = 200
+        headers = {"content-encoding": "gzip", "content-length": str(len(compressed_bomb))}
+
+        def iter_bytes(self):
+            raise AssertionError("compressed body must not be decoded or processed")
+            yield b""
+
+    class Client:
+        @contextmanager
+        def stream(self, method: str, url: str, **kwargs):
+            requested_headers.append(kwargs["headers"])
+            yield Response()
+
+    @contextmanager
+    def pinned_client(address: str):
+        assert address == "93.184.216.34"
+        yield Client()
+
+    monkeypatch.setattr(safety, "_pinned_client", pinned_client)
+
+    with pytest.raises(UnsafePublicUrl, match="URL destination is not publicly reachable"):
+        inspect_public_url("https://source.example/feed", lambda _: ["93.184.216.34"])
+
+    assert requested_headers == [
+        {"Accept": "application/atom+xml, application/rss+xml, text/html;q=0.9", "Accept-Encoding": "identity"}
+    ]

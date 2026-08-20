@@ -159,15 +159,13 @@ def socket_resolver(host: str) -> list[str]:
     return list({address for result in results if isinstance(address := result[4][0], str)})
 
 
-def inspect_public_url(
-    entry_url: str, client: httpx.Client | None, resolver: Resolver
-) -> SafeHttpResponse:
+def inspect_public_url(entry_url: str, resolver: Resolver) -> SafeHttpResponse:
     first = canonicalize_public_http_url(entry_url)
     try:
-        initial = _fetch_public_url(first, client, resolver)
+        initial = _fetch_public_url(first, resolver)
         if initial.is_redirect:
             target = safe_redirect_target(first, initial.location or "", resolver)
-            redirected = _fetch_public_url(target, client, resolver)
+            redirected = _fetch_public_url(target, resolver)
             if redirected.is_redirect:
                 raise UnsafePublicUrl(_UNREACHABLE_URL_MESSAGE)
             assert redirected.response is not None
@@ -181,12 +179,8 @@ def inspect_public_url(
     return initial.response
 
 
-def _fetch_public_url(
-    url: str, client: httpx.Client | None, resolver: Resolver
-) -> _FetchedPublicUrl:
+def _fetch_public_url(url: str, resolver: Resolver) -> _FetchedPublicUrl:
     addresses = _public_addresses(url, resolver)
-    if client is not None:
-        return _stream_public_response(client, url)
     with _pinned_client(addresses[0]) as pinned_client:
         return _stream_public_response(pinned_client, url)
 
@@ -204,7 +198,10 @@ def _pinned_client(address: str) -> Iterator[httpx.Client]:
 
 
 def _stream_public_response(client: httpx.Client, url: str) -> _FetchedPublicUrl:
-    headers = {"Accept": "application/atom+xml, application/rss+xml, text/html;q=0.9"}
+    headers = {
+        "Accept": "application/atom+xml, application/rss+xml, text/html;q=0.9",
+        "Accept-Encoding": "identity",
+    }
     with client.stream("GET", url, headers=headers, follow_redirects=False) as response:
         if response.is_redirect:
             return _FetchedPublicUrl(
@@ -213,6 +210,8 @@ def _stream_public_response(client: httpx.Client, url: str) -> _FetchedPublicUrl
                 location=response.headers.get("location"),
             )
         if response.status_code >= 400:
+            raise UnsafePublicUrl(_UNREACHABLE_URL_MESSAGE)
+        if response.headers.get("content-encoding", "identity").strip().lower() != "identity":
             raise UnsafePublicUrl(_UNREACHABLE_URL_MESSAGE)
         content_length = response.headers.get("content-length")
         if content_length is not None:

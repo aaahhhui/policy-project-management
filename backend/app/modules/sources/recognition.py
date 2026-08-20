@@ -1,13 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date as calendar_date, datetime
 from html.parser import HTMLParser
 from typing import Literal
 from urllib.parse import urlsplit
 from xml.etree import ElementTree
-
-import httpx
 
 from app.modules.sources.safety import (
     Resolver,
@@ -27,6 +26,7 @@ RecognitionKind = Literal[
 _READY_STATUS: Literal["ready_to_enable"] = "ready_to_enable"
 _PENDING_SUMMARY = "This public URL needs verification"
 _REJECTED_SUMMARY = "Unable to safely inspect this public URL"
+SafeFetcher = Callable[[str, Resolver], SafeHttpResponse]
 
 
 @dataclass(frozen=True)
@@ -116,15 +116,15 @@ class SourceRecognizer:
     def __init__(
         self,
         *,
-        client: httpx.Client | None = None,
+        fetcher: SafeFetcher = inspect_public_url,
         resolver: Resolver = socket_resolver,
     ) -> None:
-        self._client = client
+        self._fetcher = fetcher
         self._resolver = resolver
 
     def recognize(self, entry_url: str) -> RecognitionResult:
         try:
-            response = inspect_public_url(entry_url, self._client, self._resolver)
+            response = self._fetcher(entry_url, self._resolver)
         except (UnsafePublicUrl, ValueError):
             return self._rejected()
         if self._is_feed_response(response):
