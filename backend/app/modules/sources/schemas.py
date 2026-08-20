@@ -1,7 +1,28 @@
 from datetime import datetime
+from typing import Literal
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator, model_validator
 
 _HTTP_URL = TypeAdapter(AnyHttpUrl)
+
+RecognitionStatus = Literal[
+    "recognizing", "ready_to_enable", "enabled", "pending_verification", "rejected", "disabled"
+]
+RecognitionKind = Literal[
+    "rss_atom", "supported_government_site", "public_listing_page", "one_off_policy_link"
+]
+
+
+class SourceRecognitionRetryInput(BaseModel):
+    representative_url: str | None = Field(default=None, max_length=2048)
+
+    @field_validator("representative_url")
+    @classmethod
+    def validate_representative_url(cls, value: str | None) -> str | None:
+        return _absolute_http_url(value) if value is not None else value
+
+
+class SourceVersionInput(BaseModel):
+    expected_version: int = Field(ge=1)
 
 
 def _trim_nonblank(value: str, field_name: str) -> str:
