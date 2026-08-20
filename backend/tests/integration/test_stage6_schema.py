@@ -5,7 +5,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import Connection, create_engine, insert, inspect, text
-from sqlalchemy.exc import StatementError
+from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import get_settings
@@ -168,6 +168,41 @@ def test_stage6_models_reject_unknown_recognition_codes(db, seeded_owner) -> Non
         )
 
 
+def test_stage6_database_rejects_unknown_recognition_codes(stage6_connection: Connection) -> None:
+    base_values = {
+        "adapter_status": "pending",
+        "is_enabled": 0,
+        "created_by": 1,
+        "updated_by": 1,
+    }
+
+    with stage6_connection.begin_nested():
+        with pytest.raises(IntegrityError):
+            stage6_connection.execute(
+                text(
+                    "INSERT INTO policy_sources "
+                    "(id, name, entry_url, adapter_status, is_enabled, recognition_status, "
+                    "recognition_summary, created_by, updated_by) VALUES "
+                    "(3, 'Invalid status', 'https://invalid-status.example', :adapter_status, "
+                    ":is_enabled, 'unknown', '', :created_by, :updated_by)"
+                ),
+                base_values,
+            )
+
+    with stage6_connection.begin_nested():
+        with pytest.raises(IntegrityError):
+            stage6_connection.execute(
+                text(
+                    "INSERT INTO policy_sources "
+                    "(id, name, entry_url, adapter_status, is_enabled, recognition_status, "
+                    "recognition_kind, recognition_summary, created_by, updated_by) VALUES "
+                    "(4, 'Invalid kind', 'https://invalid-kind.example', :adapter_status, "
+                    ":is_enabled, 'pending_verification', 'unknown', '', :created_by, :updated_by)"
+                ),
+                base_values,
+            )
+
+
 @pytest.mark.parametrize(
     "recognition_status",
     [
@@ -260,3 +295,25 @@ def test_stage6_downgrade_restores_stage5_source_shape(stage6_connection: Connec
     assert stage6_connection.execute(text("SELECT count(*) FROM collection_tasks")).scalar_one() == 1
     assert stage6_connection.execute(text("SELECT count(*) FROM enterprise_profiles")).scalar_one() == 1
     assert stage6_connection.execute(text("SELECT count(*) FROM business_entities")).scalar_one() == 3
+
+
+def test_stage6_downgrade_removes_named_recognition_checks_before_column_drop(
+    stage6_connection: Connection,
+) -> None:
+    config = Config(str(Path(__file__).parents[2] / "alembic.ini"))
+    config.attributes["connection"] = stage6_connection
+
+    check_names = {
+        check["name"]
+        for check in inspect(stage6_connection).get_check_constraints("policy_sources")
+    }
+    assert {"source_recognition_status_code", "source_recognition_kind_code"} <= check_names
+
+    command.downgrade(config, "0007_reconcile_eval_constraint")
+
+    remaining_check_names = {
+        check["name"]
+        for check in inspect(stage6_connection).get_check_constraints("policy_sources")
+    }
+    assert "source_recognition_status_code" not in remaining_check_names
+    assert "source_recognition_kind_code" not in remaining_check_names

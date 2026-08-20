@@ -119,6 +119,8 @@ def downgrade() -> None:
         )
     )
     with op.batch_alter_table("policy_sources") as batch_op:
+        batch_op.drop_constraint("source_recognition_kind_code", type_="check")
+        batch_op.drop_constraint("source_recognition_status_code", type_="check")
         batch_op.drop_column("version")
         batch_op.drop_column("disabled_at")
         batch_op.drop_column("enabled_at")
