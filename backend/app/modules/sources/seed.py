@@ -1,4 +1,5 @@
 import sys
+from datetime import UTC, datetime
 from typing import TypedDict
 
 from sqlalchemy import select
@@ -6,9 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
 from app.modules.auth.models import Role, User
-from app.modules.sources.models import PolicySource
-from app.modules.sources.schemas import SourceChannelInput, SourceCreate, SourceUpdate
-from app.modules.sources.service import SourceService
+from app.modules.sources.models import PolicySource, SourceChannel
 
 class _SeedChannel(TypedDict):
     code: str
@@ -18,15 +17,13 @@ class _SeedChannel(TypedDict):
 
 class _SeedSource(TypedDict):
     name: str
-    home_url: str
-    adapter_key: str
+    entry_url: str
     channels: list[_SeedChannel]
 
 
 GDII_SOURCE: _SeedSource = {
     "name": "广东省工业和信息化厅",
-    "home_url": "https://gdii.gd.gov.cn/",
-    "adapter_key": "gdii",
+    "entry_url": "https://gdii.gd.gov.cn/",
     "channels": [
         {
             "code": "notices",
@@ -42,28 +39,61 @@ GDII_SOURCE: _SeedSource = {
 }
 
 
-def _payload() -> SourceCreate:
-    return SourceCreate(
+def _server_channel(channel: _SeedChannel) -> SourceChannel:
+    return SourceChannel(**channel, is_enabled=True)
+
+
+def _sync_server_channels(source: PolicySource) -> None:
+    existing = {channel.code: channel for channel in source.channels}
+    for channel in GDII_SOURCE["channels"]:
+        current = existing.get(channel["code"])
+        if current is None:
+            source.channels.append(_server_channel(channel))
+            continue
+        current.name = channel["name"]
+        current.list_url = channel["list_url"]
+        current.is_enabled = True
+
+
+def _new_seed_source(actor: User) -> PolicySource:
+    source = PolicySource(
         name=GDII_SOURCE["name"],
-        home_url=GDII_SOURCE["home_url"],
-        channels=[SourceChannelInput(**channel) for channel in GDII_SOURCE["channels"]],
+        entry_url=GDII_SOURCE["entry_url"],
+        adapter_key="gdii",
+        adapter_status="ready",
+        recognition_status="ready_to_enable",
+        recognition_kind="supported_government_site",
+        recognition_summary="广东省工业和信息化厅 · 公开政策列表",
+        previewed_at=datetime.now(UTC),
+        is_enabled=False,
+        created_by=actor.id,
+        updated_by=actor.id,
     )
+    source.channels = [_server_channel(channel) for channel in GDII_SOURCE["channels"]]
+    return source
 
 
 def seed_gdii_source(db: Session, actor: User) -> PolicySource:
-    service = SourceService(db, actor)
     source = db.scalar(select(PolicySource).where(PolicySource.name == GDII_SOURCE["name"]))
     try:
         if source is None:
-            source = service.create(_payload(), adapter_key="gdii")
+            source = _new_seed_source(actor)
+            db.add(source)
         else:
-            source = service.update(
-                source.id,
-                SourceUpdate(home_url=GDII_SOURCE["home_url"], channels=_payload().channels, is_enabled=True),
-            )
+            source.entry_url = GDII_SOURCE["entry_url"]
             source.adapter_key = "gdii"
             source.adapter_status = "ready"
             source.updated_by = actor.id
+            _sync_server_channels(source)
+            if source.recognition_status not in {"enabled", "disabled"}:
+                source.recognition_status = "ready_to_enable"
+                source.recognition_kind = "supported_government_site"
+                source.recognition_summary = "广东省工业和信息化厅 · 公开政策列表"
+                source.previewed_at = datetime.now(UTC)
+                source.is_enabled = False
+                source.owner_confirmed_at = None
+                source.enabled_at = None
+                source.disabled_at = None
         db.commit()
     except Exception:
         db.rollback()

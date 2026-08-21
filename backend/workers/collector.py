@@ -14,6 +14,7 @@ from app.modules.sources.models import PolicySource, SourceChannel
 from app.modules.sources.safety import inspect_public_url, socket_resolver
 
 _FIXED_URL_COLLECTOR_KEYS = {"rss_atom", "single_policy_link"}
+_RELEASED_COLLECTOR_KEYS = _FIXED_URL_COLLECTOR_KEYS | {"gdii"}
 _SAFE_FAILURE_MESSAGE = "collection could not be completed"
 
 
@@ -63,6 +64,13 @@ def run_once(
             return True
         adapter_key = source.adapter_key
         entry_url = source.entry_url
+        if (
+            source.recognition_status != "enabled"
+            or not source.is_enabled
+            or adapter_key not in _RELEASED_COLLECTOR_KEYS
+        ):
+            _finish_fixed_url_task(session_factory, task_id, False)
+            return True
         if adapter_key in _FIXED_URL_COLLECTOR_KEYS:
             try:
                 public_url_inspector(entry_url)

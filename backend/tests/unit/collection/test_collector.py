@@ -4,11 +4,13 @@ from subprocess import CompletedProcess
 import subprocess
 import sys
 
+import pytest
 from sqlalchemy.orm import Session
 
 from app.modules.collection.models import CollectionTask, CollectionTaskItem
 from app.modules.collection.service import CollectionTaskService
 from app.modules.sources.models import PolicySource, SourceChannel
+from app.modules.sources.service import SourceService
 from workers.collector import cutoff_for, run_once
 
 
@@ -256,5 +258,46 @@ def test_run_once_rejects_unknown_persisted_collector_key_without_starting_a_pro
 
     assert run_once(session_factory=lambda: nullcontext(db), runner=runner) is True
     assert commands == []
+    assert task.status == "failed"
+    assert task.error_message == "collection could not be completed"
+
+
+@pytest.mark.parametrize("adapter_key", ["gdii", "rss_atom"])
+def test_run_once_rejects_a_task_queued_before_its_source_is_disabled(
+    db, seeded_owner, adapter_key
+):
+    source = _ready_source(db, seeded_owner) if adapter_key == "gdii" else _fixed_adapter_source(
+        db, seeded_owner, adapter_key
+    )
+    if adapter_key == "gdii":
+        db.add(
+            SourceChannel(
+                source_id=source.id,
+                code="notices",
+                name="Notices",
+                list_url="https://gdii.gd.gov.cn/zwgk/tzgg1011/index.html",
+                is_enabled=True,
+            )
+        )
+        db.commit()
+    task = CollectionTaskService(db).create(source.id, "scheduled", None)
+    SourceService(db, seeded_owner).disable(source.id, source.version)
+    commands = []
+    inspected_urls = []
+
+    def runner(command, **kwargs):
+        commands.append(command)
+        return CompletedProcess(command, 0)
+
+    def inspect(url):
+        inspected_urls.append(url)
+
+    assert run_once(
+        session_factory=lambda: nullcontext(db),
+        runner=runner,
+        public_url_inspector=inspect,
+    ) is True
+    assert commands == []
+    assert inspected_urls == []
     assert task.status == "failed"
     assert task.error_message == "collection could not be completed"

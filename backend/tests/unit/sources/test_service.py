@@ -6,6 +6,7 @@ from app.modules.collection.models import CollectionTask
 from app.modules.collection.service import CollectionTaskService
 from app.modules.sources.recognition import RecognitionResult
 from app.modules.sources.schemas import SourceCreate, SourceRecognitionRetryInput
+from app.modules.sources.seed import GDII_SOURCE, seed_gdii_source
 from app.modules.sources.service import (
     SourceNotCollectable,
     SourceStateConflict,
@@ -197,3 +198,20 @@ def test_list_returns_requested_source_page(db, seeded_owner):
 
     assert [source.name for source in sources] == ["Beta"]
     assert total == 3
+
+
+def test_gdii_seed_is_server_owned_idempotent_and_waits_for_owner_confirmation(db, seeded_owner):
+    seeded = seed_gdii_source(db, seeded_owner)
+    repeated = seed_gdii_source(db, seeded_owner)
+
+    assert repeated.id == seeded.id
+    assert seeded.entry_url == GDII_SOURCE["entry_url"]
+    assert seeded.adapter_key == "gdii"
+    assert seeded.recognition_status == "ready_to_enable"
+    assert seeded.recognition_kind == "supported_government_site"
+    assert seeded.is_enabled is False
+    assert seeded.owner_confirmed_at is None
+    assert [(channel.code, channel.list_url) for channel in seeded.channels] == [
+        ("notices", "https://gdii.gd.gov.cn/zwgk/tzgg1011/index.html"),
+        ("funds", "https://gdii.gd.gov.cn/xmzj1033/index.html"),
+    ]
