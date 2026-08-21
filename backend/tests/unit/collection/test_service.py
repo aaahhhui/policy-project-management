@@ -15,6 +15,7 @@ def _ready_source(db, owner) -> PolicySource:
         home_url="https://example.com",
         adapter_key="gdii",
         adapter_status="ready",
+        recognition_status="enabled",
         is_enabled=True,
         created_by=owner.id,
         updated_by=owner.id,
