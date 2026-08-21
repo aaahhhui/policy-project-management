@@ -1,160 +1,199 @@
-from sqlalchemy import select
+from datetime import UTC, datetime
+
 import pytest
 
 from app.modules.collection.models import CollectionTask
-from app.modules.sources.models import PolicySource, SourceChannel
-from app.modules.sources.schemas import SourceChannelInput, SourceCreate, SourceUpdate
-from app.modules.sources.seed import GDII_SOURCE, seed_gdii_source
-from app.modules.sources.service import SourceConflict, SourceNotCollectable, SourceService
-
-
-def test_new_unrecognized_source_is_pending_and_records_scalar_audit_ids(db, seeded_owner):
-    source = SourceService(db, seeded_owner).create(
-        SourceCreate(name="  Example source  ", home_url="https://example.com", channels=[])
-    )
-
-    assert source.name == "Example source"
-    assert source.entry_url == "https://example.com/"
-    assert source.adapter_status == "pending"
-    assert source.adapter_key is None
-    assert source.recognition_status == "pending_verification"
-    assert source.version == 1
-    assert source.created_by == seeded_owner.id
-    assert source.updated_by == seeded_owner.id
-
-
-def test_pending_and_disabled_sources_cannot_collect(db, seeded_owner):
-    service = SourceService(db, seeded_owner)
-    pending = service.create(SourceCreate(name="Pending", home_url="https://pending.example", channels=[]))
-    ready = service.create(
-        SourceCreate(name="Ready", home_url="https://ready.example", channels=[]), adapter_key="gdii"
-    )
-    service.toggle(ready.id)
-
-    with pytest.raises(SourceNotCollectable, match="adapter"):
-        SourceService(db, None).assert_collectable(pending.id)
-    with pytest.raises(SourceNotCollectable, match="disabled"):
-        SourceService(db, None).assert_collectable(ready.id)
-
-
-def test_create_rejects_duplicate_names_and_duplicate_channel_codes(db, seeded_owner):
-    service = SourceService(db, seeded_owner)
-    service.create(SourceCreate(name="Unique", home_url="https://first.example", channels=[]))
-
-    with pytest.raises(SourceConflict, match="name"):
-        service.create(SourceCreate(name=" Unique ", home_url="https://second.example", channels=[]))
-    with pytest.raises(ValueError, match="channel code"):
-        SourceCreate(
-            name="Channels",
-            home_url="https://channels.example",
-            channels=[
-                SourceChannelInput(code="notices", name="Notices", list_url="https://a.example"),
-                SourceChannelInput(code=" notices ", name="Duplicate", list_url="https://b.example"),
-            ],
-        )
-
-
-@pytest.mark.parametrize(
-    "url",
-    [
-        "example.com",
-        "ftp://example.com",
-        "/relative",
-        "https://exa mple.com",
-        "https://user:password@example.com",
-        "https://",
-    ],
+from app.modules.collection.service import CollectionTaskService
+from app.modules.sources.recognition import RecognitionResult
+from app.modules.sources.schemas import SourceCreate, SourceRecognitionRetryInput
+from app.modules.sources.service import (
+    SourceNotCollectable,
+    SourceStateConflict,
+    SourceVersionConflict,
+    SourceService,
 )
-def test_create_rejects_non_absolute_http_urls(url):
-    with pytest.raises(ValueError):
-        SourceCreate(name="Invalid URL", home_url=url, channels=[])
 
 
-def test_source_urls_trim_and_normalize_http_urls_with_localhost_and_ip_support():
-    source = SourceCreate(
-        name="Normalized",
-        home_url="  https://Example.COM/source  ",
-        channels=[
-            SourceChannelInput(
-                code="local",
-                name="Local",
-                list_url=" http://localhost:8080/policies ",
-            ),
-            SourceChannelInput(
-                code="ip",
-                name="IP",
-                list_url="https://127.0.0.1:8443/notices",
-            ),
-        ],
+class StubRecognizer:
+    def __init__(self, *results: RecognitionResult) -> None:
+        self._results = list(results)
+        self.urls: list[str] = []
+
+    def recognize(self, entry_url: str) -> RecognitionResult:
+        self.urls.append(entry_url)
+        return self._results.pop(0)
+
+
+def _ready_result(adapter_key: str = "rss_atom") -> RecognitionResult:
+    return RecognitionResult(
+        status="ready_to_enable",
+        kind="rss_atom",
+        summary="Public policy feed · 2 entries",
+        previewed_at=datetime(2026, 8, 20, tzinfo=UTC),
+        adapter_key=adapter_key,
     )
 
-    assert source.home_url == "https://example.com/source"
-    assert source.channels[0].list_url == "http://localhost:8080/policies"
-    assert source.channels[1].list_url == "https://127.0.0.1:8443/notices"
 
-
-def test_channel_reconciliation_is_atomic_and_preserves_removed_channel_history(db, seeded_owner):
-    service = SourceService(db, seeded_owner)
-    source = service.create(
-        SourceCreate(
-            name="Atomic",
-            home_url="https://atomic.example",
-            channels=[
-                SourceChannelInput(code="notices", name="Notices", list_url="https://atomic.example/notices"),
-                SourceChannelInput(code="funds", name="Funds", list_url="https://atomic.example/funds"),
-            ],
-        )
-    )
-    notices = next(channel for channel in source.channels if channel.code == "notices")
-    db.add(CollectionTask(source_id=source.id, trigger_type="manual", status="succeeded"))
-    db.commit()
-
-    updated = service.update(
-        source.id,
-        SourceUpdate(
-            channels=[
-                SourceChannelInput(
-                    code="notices", name="New notices", list_url="https://atomic.example/new-notices"
-                )
-            ]
-        ),
+def _pending_result() -> RecognitionResult:
+    return RecognitionResult(
+        status="pending_verification",
+        kind=None,
+        summary="This public URL needs verification",
+        previewed_at=None,
+        adapter_key=None,
     )
 
-    channel_by_code = {channel.code: channel for channel in updated.channels}
-    assert channel_by_code["notices"].id == notices.id
-    assert channel_by_code["notices"].name == "New notices"
-    assert channel_by_code["funds"].is_enabled is False
-    assert db.scalar(select(CollectionTask).where(CollectionTask.source_id == source.id)) is not None
 
-    with pytest.raises(ValueError, match="channel code"):
-        service.update(
-            source.id,
-            SourceUpdate(
-                channels=[
-                    SourceChannelInput(code="notices", name="One", list_url="https://atomic.example/one"),
-                    SourceChannelInput(code="notices", name="Two", list_url="https://atomic.example/two"),
-                ]
-            ),
-        )
-    assert {channel.code: channel.name for channel in db.scalars(select(SourceChannel))} == {
-        "notices": "New notices",
-        "funds": "Funds",
-    }
+def _rejected_result() -> RecognitionResult:
+    return RecognitionResult(
+        status="rejected",
+        kind=None,
+        summary="Unable to safely inspect this public URL",
+        previewed_at=None,
+        adapter_key=None,
+    )
 
 
-def test_gdii_seed_is_idempotent_and_ready_with_exact_channels(db, seeded_owner):
-    seed_gdii_source(db, seeded_owner)
-    seed_gdii_source(db, seeded_owner)
+def _create_payload(name: str = "Feed", url: str = "https://public.example/feed.xml") -> SourceCreate:
+    return SourceCreate(
+        name=name,
+        entry_url=url,
+        region_labels=["Guangdong"],
+        topic_labels=["Funding"],
+    )
 
-    source = db.scalar(select(PolicySource).where(PolicySource.name == GDII_SOURCE["name"]))
-    assert source is not None
-    assert source.adapter_key == "gdii"
-    assert source.adapter_status == "ready"
-    assert source.entry_url == GDII_SOURCE["home_url"]
-    assert source.recognition_status == "pending_verification"
-    assert source.version == 1
-    assert [(channel.code, channel.list_url) for channel in source.channels] == [
-        ("notices", "https://gdii.gd.gov.cn/zwgk/tzgg1011/index.html"),
-        ("funds", "https://gdii.gd.gov.cn/xmzj1033/index.html"),
+
+def test_create_persists_only_safe_recognition_and_waits_for_owner_confirmation(db, seeded_owner):
+    recognizer = StubRecognizer(_ready_result())
+    source = SourceService(db, seeded_owner, recognizer=recognizer).create(_create_payload())
+
+    assert recognizer.urls == ["https://public.example/feed.xml"]
+    assert source.recognition_status == "ready_to_enable"
+    assert source.recognition_kind == "rss_atom"
+    assert source.recognition_summary == "Public policy feed · 2 entries"
+    assert source.previewed_at is not None
+    assert source.adapter_key == "rss_atom"
+    assert source.is_enabled is False
+    assert source.owner_confirmed_at is None
+    assert source.enabled_at is None
+    assert source.region_labels == ["Guangdong"]
+    assert source.topic_labels == ["Funding"]
+    assert db.query(CollectionTask).filter_by(source_id=source.id).count() == 0
+
+
+@pytest.mark.parametrize("result", [_pending_result(), _rejected_result()])
+def test_unrecognized_results_are_not_collectable(db, seeded_owner, result):
+    source = SourceService(db, seeded_owner, recognizer=StubRecognizer(result)).create(_create_payload())
+
+    assert source.recognition_status == result.status
+    assert source.adapter_key is None
+    assert source.is_enabled is False
+    with pytest.raises(SourceNotCollectable):
+        SourceService(db, None).assert_collectable(source.id)
+
+
+def test_enable_requires_current_ready_version_and_disable_preserves_history(db, seeded_owner):
+    service = SourceService(db, seeded_owner, recognizer=StubRecognizer(_ready_result()))
+    source = service.create(_create_payload())
+    initial_version = source.version
+
+    enabled = service.enable(source.id, source.version)
+    enabled_version = enabled.version
+    assert enabled.recognition_status == "enabled"
+    assert enabled.is_enabled is True
+    assert enabled.owner_confirmed_at is not None
+    assert enabled.enabled_at is not None
+    assert enabled.version == initial_version + 1
+    task = CollectionTaskService(db).create(enabled.id, "scheduled", None)
+    disabled = service.disable(enabled.id, enabled.version)
+
+    assert task.source_id == source.id
+    assert disabled.recognition_status == "disabled"
+    assert disabled.is_enabled is False
+    assert disabled.disabled_at is not None
+    assert disabled.version == enabled_version + 1
+    assert db.get(CollectionTask, task.id) is not None
+    with pytest.raises(SourceNotCollectable):
+        SourceService(db, None).assert_collectable(disabled.id)
+
+
+def test_enable_and_disable_reject_stale_versions_and_invalid_states(db, seeded_owner):
+    service = SourceService(db, seeded_owner, recognizer=StubRecognizer(_ready_result()))
+    source = service.create(_create_payload())
+
+    with pytest.raises(SourceVersionConflict) as stale_enable:
+        service.enable(source.id, source.version + 1)
+    assert stale_enable.value.current_version == source.version
+
+    enabled = service.enable(source.id, source.version)
+    with pytest.raises(SourceStateConflict):
+        service.enable(enabled.id, enabled.version)
+    with pytest.raises(SourceVersionConflict) as stale_disable:
+        service.disable(enabled.id, enabled.version + 1)
+    assert stale_disable.value.current_version == enabled.version
+
+
+def test_retry_replaces_pending_preview_without_automatic_enablement(db, seeded_owner):
+    recognizer = StubRecognizer(_pending_result(), _ready_result("single_policy_link"))
+    service = SourceService(db, seeded_owner, recognizer=recognizer)
+    pending = service.create(_create_payload())
+
+    retried = service.retry_recognition(
+        pending.id,
+        SourceRecognitionRetryInput(representative_url="https://public.example/policy/notice"),
+    )
+
+    assert recognizer.urls == [
+        "https://public.example/feed.xml",
+        "https://public.example/policy/notice",
     ]
-    assert len(list(db.scalars(select(PolicySource)))) == 1
+    assert retried.id == pending.id
+    assert retried.recognition_status == "ready_to_enable"
+    assert retried.adapter_key == "single_policy_link"
+    assert retried.is_enabled is False
+    assert retried.owner_confirmed_at is None
+    assert retried.enabled_at is None
+    assert retried.disabled_at is None
+
+
+def test_retry_only_accepts_pending_or_rejected_sources(db, seeded_owner):
+    service = SourceService(db, seeded_owner, recognizer=StubRecognizer(_ready_result()))
+    source = service.create(_create_payload())
+
+    with pytest.raises(SourceStateConflict):
+        service.retry_recognition(source.id, SourceRecognitionRetryInput())
+
+
+def test_rejected_source_can_be_retried(db, seeded_owner):
+    service = SourceService(
+        db,
+        seeded_owner,
+        recognizer=StubRecognizer(_rejected_result(), _ready_result()),
+    )
+    rejected = service.create(_create_payload())
+
+    retried = service.retry_recognition(rejected.id, SourceRecognitionRetryInput())
+
+    assert retried.recognition_status == "ready_to_enable"
+    assert retried.is_enabled is False
+
+
+def test_all_non_enabled_states_are_not_collectable(db, seeded_owner):
+    for index, result in enumerate((_ready_result(), _pending_result(), _rejected_result()), start=1):
+        source = SourceService(db, seeded_owner, recognizer=StubRecognizer(result)).create(
+            _create_payload(f"Source {index}")
+        )
+        with pytest.raises(SourceNotCollectable):
+            SourceService(db, None).assert_collectable(source.id)
+
+
+def test_list_returns_requested_source_page(db, seeded_owner):
+    recognizer = StubRecognizer(_pending_result(), _pending_result(), _pending_result())
+    service = SourceService(db, seeded_owner, recognizer=recognizer)
+    for name in ("Gamma", "Alpha", "Beta"):
+        service.create(_create_payload(name))
+
+    sources, total = service.list(page=2, page_size=1)
+
+    assert [source.name for source in sources] == ["Beta"]
+    assert total == 3

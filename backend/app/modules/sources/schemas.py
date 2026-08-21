@@ -13,6 +13,8 @@ RecognitionKind = Literal[
 
 
 class SourceRecognitionRetryInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     representative_url: str | None = Field(default=None, max_length=2048)
 
     @field_validator("representative_url")
@@ -22,6 +24,8 @@ class SourceRecognitionRetryInput(BaseModel):
 
 
 class SourceVersionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     expected_version: int = Field(ge=1)
 
 
@@ -71,19 +75,28 @@ class _ChannelCollection(BaseModel):
         return self
 
 
-class SourceCreate(_ChannelCollection):
+class SourceCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(max_length=255)
-    home_url: str = Field(max_length=2048)
+    entry_url: str = Field(max_length=2048)
+    region_labels: list[str] = Field(default_factory=list, max_length=20)
+    topic_labels: list[str] = Field(default_factory=list, max_length=20)
 
     @field_validator("name")
     @classmethod
     def validate_name(cls, value: str) -> str:
         return _trim_nonblank(value, "name")
 
-    @field_validator("home_url")
+    @field_validator("entry_url")
     @classmethod
-    def validate_home_url(cls, value: str) -> str:
+    def validate_entry_url(cls, value: str) -> str:
         return _absolute_http_url(value)
+
+    @field_validator("region_labels", "topic_labels")
+    @classmethod
+    def validate_labels(cls, values: list[str]) -> list[str]:
+        return [_trim_nonblank(value, "label") for value in values]
 
 
 class SourceUpdate(BaseModel):
@@ -125,11 +138,23 @@ class SourceChannelResponse(BaseModel):
 class SourceResponse(BaseModel):
     id: int
     name: str
-    home_url: str
-    adapter_status: str
-    is_enabled: bool
-    created_by: int
-    updated_by: int
-    channels: list[SourceChannelResponse]
-    latest_collection_at: datetime | None = None
-    latest_result: str | None = None
+    entry_url: str
+    region_labels: list[str]
+    topic_labels: list[str]
+    recognition_status: RecognitionStatus
+    recognition_kind: RecognitionKind | None
+    recognition_summary: str
+    previewed_at: datetime | None
+    owner_confirmed_at: datetime | None
+    enabled_at: datetime | None
+    disabled_at: datetime | None
+    version: int
+    latest_collection_at: datetime | None
+    latest_result: str | None
+
+
+class SourcePage(BaseModel):
+    items: list[SourceResponse]
+    page: int
+    page_size: int
+    total: int

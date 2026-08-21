@@ -6,7 +6,7 @@ import sys
 
 from sqlalchemy.orm import Session
 
-from app.modules.collection.models import CollectionTaskItem
+from app.modules.collection.models import CollectionTask, CollectionTaskItem
 from app.modules.collection.service import CollectionTaskService
 from app.modules.sources.models import PolicySource, SourceChannel
 from workers.collector import cutoff_for, run_once
@@ -36,6 +36,23 @@ def _ready_source(db, owner) -> PolicySource:
         home_url="https://example.com",
         adapter_key="gdii",
         adapter_status="ready",
+        recognition_status="enabled",
+        is_enabled=True,
+        created_by=owner.id,
+        updated_by=owner.id,
+    )
+    db.add(source)
+    db.commit()
+    return source
+
+
+def _fixed_adapter_source(db, owner, adapter_key: str) -> PolicySource:
+    source = PolicySource(
+        name=f"{adapter_key} source",
+        entry_url="https://public.example/feed.xml",
+        adapter_key=adapter_key,
+        adapter_status="ready",
+        recognition_status="enabled",
         is_enabled=True,
         created_by=owner.id,
         updated_by=owner.id,
@@ -194,3 +211,50 @@ def test_run_once_refreshes_session_before_counting_items_written_by_spider(
     assert len(factory_calls) == 2
     assert task.status == "succeeded"
     assert (task.discovered_count, task.succeeded_count, task.failed_count) == (1, 1, 0)
+
+
+def test_run_once_uses_fixed_rss_collector_without_a_spider_command(db, seeded_owner):
+    source = _fixed_adapter_source(db, seeded_owner, "rss_atom")
+    task = CollectionTaskService(db).create(source.id, "scheduled", None)
+    commands = []
+    inspected_urls = []
+
+    def runner(command, **kwargs):
+        commands.append(command)
+        return CompletedProcess(command, 0)
+
+    def inspect(url):
+        inspected_urls.append(url)
+
+    assert run_once(
+        session_factory=lambda: nullcontext(db),
+        runner=runner,
+        public_url_inspector=inspect,
+    ) is True
+    assert inspected_urls == [source.entry_url]
+    assert commands == []
+    assert task.status == "succeeded"
+    assert (task.discovered_count, task.succeeded_count, task.failed_count) == (0, 0, 0)
+
+
+def test_run_once_rejects_unknown_persisted_collector_key_without_starting_a_process(
+    db, seeded_owner
+):
+    source = _fixed_adapter_source(db, seeded_owner, "unreleased")
+    task = CollectionTask(
+        source_id=source.id,
+        trigger_type="scheduled",
+        status="pending",
+    )
+    db.add(task)
+    db.commit()
+    commands = []
+
+    def runner(command, **kwargs):
+        commands.append(command)
+        return CompletedProcess(command, 0)
+
+    assert run_once(session_factory=lambda: nullcontext(db), runner=runner) is True
+    assert commands == []
+    assert task.status == "failed"
+    assert task.error_message == "collection could not be completed"

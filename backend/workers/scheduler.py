@@ -9,14 +9,16 @@ from app.db.session import SessionLocal
 from app.modules.collection.service import CollectionAlreadyRunning, CollectionTaskService
 from app.modules.sources.models import PolicySource
 
+_RELEASED_COLLECTOR_KEYS = ("gdii", "rss_atom", "single_policy_link")
+
 
 def enqueue_enabled_ready_sources(db: Session, now: datetime) -> int:
     del now  # Kept explicit for deterministic scheduler tests and future cutoff policies.
     source_ids = db.scalars(
         select(PolicySource.id).where(
             PolicySource.is_enabled.is_(True),
-            PolicySource.adapter_status == "ready",
-            PolicySource.adapter_key == "gdii",
+            PolicySource.recognition_status == "enabled",
+            PolicySource.adapter_key.in_(_RELEASED_COLLECTOR_KEYS),
         )
     )
     created = 0
