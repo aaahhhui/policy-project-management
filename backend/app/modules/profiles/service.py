@@ -158,10 +158,18 @@ class ProfileService:
         return before, after, sorted(changed_fields)
 
     def _recent_audits(self, object_type: str, object_id: int) -> list[ProfileAuditSummary]:
+        action = {
+            "enterprise_profile": "enterprise_profile_updated",
+            "business_entity": "business_entity_updated",
+        }[object_type]
         rows = self.db.execute(
             select(AuditEvent, User)
             .outerjoin(User, User.id == AuditEvent.actor_id)
-            .where(AuditEvent.object_type == object_type, AuditEvent.object_id == object_id)
+            .where(
+                AuditEvent.object_type == object_type,
+                AuditEvent.object_id == object_id,
+                AuditEvent.action == action,
+            )
             .order_by(AuditEvent.occurred_at.desc(), AuditEvent.id.desc())
             .limit(20)
         )

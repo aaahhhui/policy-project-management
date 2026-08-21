@@ -67,13 +67,15 @@ class _ProfilePatch(BaseModel):
     @field_validator("data")
     @classmethod
     def validate_data(cls, value: dict[str, object] | None) -> dict[str, object] | None:
-        return _validate_profile_data(value) if value is not None else value
+        if value is None:
+            raise ValueError("data must not be null when supplied")
+        return _validate_profile_data(value)
 
     @field_validator("verification_status")
     @classmethod
     def validate_verification_status(cls, value: str | None) -> str | None:
         if value is None:
-            return None
+            raise ValueError("verification_status must not be null when supplied")
         normalized = _trim_required(value, "verification_status")
         if _STATUS_PATTERN.fullmatch(normalized) is None:
             raise ValueError("verification_status must match [a-z0-9_]+")
@@ -92,7 +94,9 @@ class ProfilePatchInput(_ProfilePatch):
     @field_validator("display_name")
     @classmethod
     def validate_display_name(cls, value: str | None) -> str | None:
-        return _trim_required(value, "display_name") if value is not None else value
+        if value is None:
+            raise ValueError("display_name must not be null when supplied")
+        return _trim_required(value, "display_name")
 
 
 class BusinessEntityPatchInput(_ProfilePatch):
@@ -101,7 +105,9 @@ class BusinessEntityPatchInput(_ProfilePatch):
     @field_validator("legal_name")
     @classmethod
     def validate_legal_name(cls, value: str | None) -> str | None:
-        return _trim_required(value, "legal_name") if value is not None else value
+        if value is None:
+            raise ValueError("legal_name must not be null when supplied")
+        return _trim_required(value, "legal_name")
 
 
 class ProfileAuditSummary(BaseModel):

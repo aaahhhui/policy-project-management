@@ -1,5 +1,6 @@
 from sqlalchemy import select
 
+from app.modules.audit.models import AuditEvent
 from app.modules.auth.models import Role, User
 from app.modules.profiles.models import BusinessEntity, EnterpriseProfile
 
@@ -152,6 +153,70 @@ def test_reader_cannot_write_profiles(client, db, seeded_owner, seeded_owner_pas
     )
 
     assert response.status_code == 403
+
+
+def test_explicit_null_profile_fields_are_rejected_without_mutating_shared_or_entity(
+    client, db, seeded_owner, seeded_owner_password
+):
+    _seed_profiles(db)
+    _login(client, seeded_owner_password)
+    shared_before = db.scalar(
+        select(EnterpriseProfile).where(EnterpriseProfile.code == "COMPANY-SHARED")
+    )
+    entity_before = db.scalar(
+        select(BusinessEntity).where(BusinessEntity.seed_code == "ENTITY-BEIJING")
+    )
+    assert shared_before is not None
+    assert entity_before is not None
+
+    for path, field_name in (
+        ("/api/profiles/shared", "display_name"),
+        ("/api/profiles/shared", "data"),
+        ("/api/profiles/shared", "verification_status"),
+        ("/api/profiles/entities/ENTITY-BEIJING", "legal_name"),
+        ("/api/profiles/entities/ENTITY-BEIJING", "data"),
+        ("/api/profiles/entities/ENTITY-BEIJING", "verification_status"),
+    ):
+        response = client.patch(path, json={"expected_version": 1, field_name: None})
+        assert response.status_code == 422
+        assert response.json()["detail"] == {"code": "profile_field_validation_failed"}
+
+    db.refresh(shared_before)
+    db.refresh(entity_before)
+    assert shared_before.version == 1
+    assert shared_before.data == {"industries": ["Software"]}
+    assert entity_before.version == 1
+    assert entity_before.data == {"seed_code": "ENTITY-BEIJING"}
+    assert db.scalar(select(AuditEvent)) is None
+
+
+def test_profile_responses_filter_legacy_audit_actions(client, db, seeded_owner, seeded_owner_password):
+    _seed_profiles(db)
+    shared = db.scalar(select(EnterpriseProfile).where(EnterpriseProfile.code == "COMPANY-SHARED"))
+    entity = db.scalar(select(BusinessEntity).where(BusinessEntity.seed_code == "ENTITY-BEIJING"))
+    assert shared is not None
+    assert entity is not None
+    db.add_all(
+        [
+            AuditEvent(action="seeded", object_type="enterprise_profile", object_id=shared.id),
+            AuditEvent(action="seeded", object_type="business_entity", object_id=entity.id),
+        ]
+    )
+    db.commit()
+    _login(client, seeded_owner_password)
+
+    assert client.get("/api/profiles/shared").json()["recent_audits"] == []
+    entities = client.get("/api/profiles/entities")
+    assert entities.status_code == 200
+    assert entities.json()[0]["recent_audits"] == []
+
+    updated = client.patch(
+        "/api/profiles/shared", json={"expected_version": 1, "display_name": "Updated"}
+    )
+    assert updated.status_code == 200
+    assert [audit["action"] for audit in updated.json()["recent_audits"]] == [
+        "enterprise_profile_updated"
+    ]
 
 
 def test_entities_route_excludes_non_stage_one_entities(client, db, seeded_owner, seeded_owner_password):
