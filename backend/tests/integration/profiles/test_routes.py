@@ -75,6 +75,8 @@ def test_both_seeded_roles_can_read_shared_profile_and_entities(
             "display_name": "Shared company",
             "data": {"industries": ["Software"]},
             "verification_status": "public_verified",
+            "version": 1,
+            "recent_audits": [],
         }
         assert [item["seed_code"] for item in entities.json()] == [
             "ENTITY-BEIJING",
@@ -86,16 +88,70 @@ def test_both_seeded_roles_can_read_shared_profile_and_entities(
         )
 
 
-def test_profile_routes_are_read_only(client, db, seeded_owner, seeded_owner_password):
+def test_only_owner_can_write_versioned_profiles_with_safe_errors(
+    client, db, seeded_owner, seeded_owner_password
+):
     _seed_profiles(db)
     _login(client, seeded_owner_password)
 
-    for path in ("/api/profiles/shared", "/api/profiles/entities"):
-        for method in ("post", "put", "patch", "delete"):
-            assert getattr(client, method)(path).status_code == 405
+    update = client.patch(
+        "/api/profiles/shared",
+        json={
+            "expected_version": 1,
+            "display_name": "Changed shared",
+            "data": {"api_token": "keep-secret", "industry": "Software"},
+        },
+    )
+    assert update.status_code == 200
+    assert update.json()["version"] == 2
+    assert update.json()["recent_audits"][0]["after_values"]["data.api_token"] == "[redacted]"
+    assert "keep-secret" not in update.text
+
+    stale = client.patch(
+        "/api/profiles/shared", json={"expected_version": 1, "display_name": "stale"}
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"] == {
+        "code": "profile_version_conflict",
+        "current_version": 2,
+    }
+
+    invalid = client.patch(
+        "/api/profiles/shared",
+        json={"expected_version": 2, "verification_status": "NOT VALID"},
+    )
+    assert invalid.status_code == 422
+    assert invalid.json()["detail"] == {"code": "profile_field_validation_failed"}
+
+    assert client.patch(
+        "/api/profiles/entities/UNKNOWN",
+        json={"expected_version": 1, "legal_name": "No such entity"},
+    ).status_code == 404
 
     assert db.scalar(select(EnterpriseProfile).where(EnterpriseProfile.code == "COMPANY-SHARED"))
     assert len(list(db.scalars(select(BusinessEntity)))) == 3
+
+
+def test_reader_cannot_write_profiles(client, db, seeded_owner, seeded_owner_password):
+    _seed_profiles(db)
+    reader_role = Role(code="reader", name="Reader")
+    db.add(
+        User(
+            login_name="reader-write",
+            display_name="Reader",
+            password_hash=seeded_owner.password_hash,
+            is_active=True,
+            roles=[reader_role],
+        )
+    )
+    db.commit()
+    _login(client, seeded_owner_password, "reader-write")
+
+    response = client.patch(
+        "/api/profiles/shared", json={"expected_version": 1, "display_name": "Denied"}
+    )
+
+    assert response.status_code == 403
 
 
 def test_entities_route_excludes_non_stage_one_entities(client, db, seeded_owner, seeded_owner_password):
