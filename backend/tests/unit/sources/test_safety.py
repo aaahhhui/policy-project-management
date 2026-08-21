@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import gzip
 
+import httpx
 import pytest
 
 from app.modules.sources import safety
@@ -204,26 +205,30 @@ def test_inspect_public_url_rejects_compressed_response_before_decoding(monkeypa
     requested_headers: list[dict[str, str]] = []
     compressed_bomb = gzip.compress(b"x" * (131_073 * 8))
     assert len(compressed_bomb) < 131_072
+    stream_state = {"iterated": False}
 
-    class Response:
-        is_redirect = False
-        status_code = 200
-        headers = {"content-encoding": "gzip", "content-length": str(len(compressed_bomb))}
+    class CompressedBombStream(httpx.SyncByteStream):
+        def __iter__(self):
+            stream_state["iterated"] = True
+            yield compressed_bomb
 
-        def iter_bytes(self):
-            raise AssertionError("compressed body must not be decoded or processed")
-            yield b""
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_headers.append(
+            {"Accept": request.headers["accept"], "Accept-Encoding": request.headers["accept-encoding"]}
+        )
+        return httpx.Response(
+            200,
+            headers={"content-encoding": "gzip", "content-length": str(len(compressed_bomb))},
+            stream=CompressedBombStream(),
+        )
 
-    class Client:
-        @contextmanager
-        def stream(self, method: str, url: str, **kwargs):
-            requested_headers.append(kwargs["headers"])
-            yield Response()
+    transport = httpx.MockTransport(handler)
 
     @contextmanager
     def pinned_client(address: str):
         assert address == "93.184.216.34"
-        yield Client()
+        with httpx.Client(transport=transport) as client:
+            yield client
 
     monkeypatch.setattr(safety, "_pinned_client", pinned_client)
 
@@ -233,3 +238,4 @@ def test_inspect_public_url_rejects_compressed_response_before_decoding(monkeypa
     assert requested_headers == [
         {"Accept": "application/atom+xml, application/rss+xml, text/html;q=0.9", "Accept-Encoding": "identity"}
     ]
+    assert stream_state == {"iterated": False}
