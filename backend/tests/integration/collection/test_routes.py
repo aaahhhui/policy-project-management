@@ -1,5 +1,5 @@
 from app.modules.auth.models import Role, User
-from app.modules.collection.models import CollectionTaskItem
+from app.modules.collection.models import CollectionTask, CollectionTaskItem
 from app.modules.sources.models import PolicySource, SourceChannel
 
 
@@ -16,6 +16,7 @@ def _ready_source(db, owner) -> PolicySource:
         home_url="https://example.com",
         adapter_key="gdii",
         adapter_status="ready",
+        recognition_status="enabled",
         is_enabled=True,
         created_by=owner.id,
         updated_by=owner.id,
@@ -61,7 +62,7 @@ def test_owner_can_trigger_and_read_collection_task(
     assert detail.json()["status"] == "pending"
 
 
-def test_task_detail_exposes_item_errors(client, db, seeded_owner, seeded_owner_password):
+def test_task_detail_redacts_crawl_errors_and_original_urls(client, db, seeded_owner, seeded_owner_password):
     source = _ready_source(db, seeded_owner)
     channel = SourceChannel(
         source_id=source.id,
@@ -78,11 +79,14 @@ def test_task_detail_exposes_item_errors(client, db, seeded_owner, seeded_owner_
         CollectionTaskItem(
             task_id=task_id,
             channel_id=channel.id,
-            original_url="https://example.com/failed",
+            original_url="https://crawler:secret-password@example.com/failed?token=secret-query-token",
             status="failed",
-            error_message="snapshot failed",
+            error_message="raw exception Authorization: Bearer secret-header",
         )
     )
+    task = db.get(CollectionTask, task_id)
+    assert task is not None
+    task.error_message = "raw collector exception: secret-error"
     db.commit()
 
     payload = client.get(f"/api/collection-tasks/{task_id}").json()
@@ -91,9 +95,17 @@ def test_task_detail_exposes_item_errors(client, db, seeded_owner, seeded_owner_
         {
             "id": 1,
             "channel_id": channel.id,
-            "original_url": "https://example.com/failed",
             "status": "failed",
             "policy_id": None,
-            "error_message": "snapshot failed",
+            "result_message": "采集失败，请稍后重试",
         }
     ]
+    assert payload["result_message"] == "采集未完成，请稍后重试"
+    for sensitive_value in (
+        "crawler",
+        "secret-password",
+        "secret-query-token",
+        "secret-header",
+        "secret-error",
+    ):
+        assert sensitive_value not in str(payload)

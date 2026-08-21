@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
 from app.modules.auth.models import Role, User
+from app.modules.sources.models import PolicySource
 from app.modules.sources.recognition import RecognitionResult
 from app.modules.sources.service import SourceService
 
@@ -170,3 +171,33 @@ def test_owner_cannot_choose_source_implementation_or_enable_unready_source(
     assert retried.status_code == 200
     assert retried.json()["id"] == pending["id"]
     assert retried.json()["recognition_status"] == "ready_to_enable"
+
+
+def test_source_api_removes_existing_record_user_info_and_query_from_entry_url(
+    client, db, seeded_owner, seeded_owner_password
+):
+    db.add(
+        PolicySource(
+            name="Legacy credential source",
+            entry_url="https://crawler:secret-password@public.example/feed.xml?token=secret-query-token",
+            adapter_key="rss_atom",
+            adapter_status="ready",
+            recognition_status="ready_to_enable",
+            recognition_kind="rss_atom",
+            recognition_summary="Safe public feed",
+            is_enabled=False,
+            created_by=seeded_owner.id,
+            updated_by=seeded_owner.id,
+        )
+    )
+    db.commit()
+    _login(client, seeded_owner_password)
+
+    response = client.get("/api/sources?page=1&page_size=20")
+
+    assert response.status_code == 200
+    source = response.json()["items"][0]
+    assert source["entry_url"] == "https://public.example/feed.xml"
+    assert "crawler" not in response.text
+    assert "secret-password" not in response.text
+    assert "secret-query-token" not in response.text

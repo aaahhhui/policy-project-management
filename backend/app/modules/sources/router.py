@@ -83,8 +83,20 @@ def _response(source: PolicySource, db: Session) -> SourceResponse:
 
 
 def _public_entry_url(entry_url: str) -> str:
-    parsed = urlsplit(entry_url)
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+    try:
+        parsed = urlsplit(entry_url)
+        host = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return ""
+    if host is None or parsed.scheme.lower() not in {"http", "https"}:
+        return ""
+    display_host = f"[{host.lower()}]" if ":" in host else host.lower()
+    default_port = (parsed.scheme.lower() == "http" and port == 80) or (
+        parsed.scheme.lower() == "https" and port == 443
+    )
+    netloc = display_host if port is None or default_port else f"{display_host}:{port}"
+    return urlunsplit((parsed.scheme.lower(), netloc, parsed.path or "/", "", ""))
 
 
 def _source_error_response(error: SourceServiceError) -> HTTPException:

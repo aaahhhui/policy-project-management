@@ -1,22 +1,17 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
 
 class CollectionTaskItemResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: int
     channel_id: int
-    original_url: str
     status: str
     policy_id: int | None
-    error_message: str | None
+    result_message: str | None
 
 
 class CollectionTaskResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: int
     source_id: int
     trigger_type: str
@@ -27,7 +22,7 @@ class CollectionTaskResponse(BaseModel):
     discovered_count: int
     succeeded_count: int
     failed_count: int
-    error_message: str | None
+    result_message: str | None
     created_at: datetime
-    items: list[CollectionTaskItemResponse] = []
+    items: list[CollectionTaskItemResponse]
 
