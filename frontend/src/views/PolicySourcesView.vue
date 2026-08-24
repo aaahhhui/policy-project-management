@@ -75,10 +75,14 @@ function setBusy(id: number, busy: boolean) {
   if (busy) next.add(id); else next.delete(id);
   busySourceIds.value = next;
 }
-async function retry(id: number) {
+async function retry(id: number, _version: number, representativeUrl?: string) {
   if (!canWrite.value || busySourceIds.value.has(id)) return;
   actionError.value = ""; setBusy(id, true);
-  try { await retrySourceRecognition(id); await loadSources(page.value); } catch (error) { actionError.value = conflictMessage(error); } finally { setBusy(id, false); }
+  try {
+    if (representativeUrl) await retrySourceRecognition(id, representativeUrl);
+    else await retrySourceRecognition(id);
+    await loadSources(page.value);
+  } catch (error) { actionError.value = conflictMessage(error); } finally { setBusy(id, false); }
 }
 async function enable(id: number, version: number) {
   if (!canWrite.value || busySourceIds.value.has(id)) return;
