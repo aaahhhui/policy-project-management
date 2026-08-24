@@ -1,50 +1,68 @@
 import http from "./http";
 
-export type AdapterStatus = "ready" | "pending";
+export type RecognitionStatus =
+  | "recognizing"
+  | "ready_to_enable"
+  | "enabled"
+  | "pending_verification"
+  | "rejected"
+  | "disabled";
 
-export interface SourceChannel {
-  id?: number;
-  code: string;
-  name: string;
-  list_url: string;
-  is_enabled: boolean;
-}
+export type RecognitionKind =
+  | "rss_atom"
+  | "supported_government_site"
+  | "public_listing_page"
+  | "one_off_policy_link";
 
 export interface PolicySource {
   id: number;
   name: string;
-  home_url: string;
-  adapter_status: AdapterStatus;
-  is_enabled: boolean;
-  created_by: number;
-  updated_by: number;
-  channels: SourceChannel[];
+  entry_url: string;
+  region_labels: string[];
+  topic_labels: string[];
+  recognition_status: RecognitionStatus;
+  recognition_kind: RecognitionKind | null;
+  recognition_summary: string;
+  previewed_at: string | null;
+  owner_confirmed_at: string | null;
+  enabled_at: string | null;
+  disabled_at: string | null;
+  version: number;
   latest_collection_at: string | null;
   latest_result: string | null;
 }
 
+export interface SourcePage {
+  items: PolicySource[];
+  page: number;
+  page_size: number;
+  total: number;
+}
+
 export interface SourceCreateInput {
   name: string;
-  home_url: string;
-  channels: Omit<SourceChannel, "id">[];
+  entry_url: string;
+  region_labels: string[];
+  topic_labels: string[];
 }
 
-export interface SourceUpdateInput extends SourceCreateInput {
-  is_enabled?: boolean;
-}
-
-export async function getSources(): Promise<PolicySource[]> {
-  return (await http.get<PolicySource[]>("/sources")).data;
+export async function getSources(page: number, pageSize: number): Promise<SourcePage> {
+  return (await http.get<SourcePage>("/sources", { params: { page, page_size: pageSize } })).data;
 }
 
 export async function createSource(payload: SourceCreateInput): Promise<PolicySource> {
   return (await http.post<PolicySource>("/sources", payload)).data;
 }
 
-export async function updateSource(id: number, payload: Partial<SourceUpdateInput>): Promise<PolicySource> {
-  return (await http.patch<PolicySource>(`/sources/${id}`, payload)).data;
+export async function retrySourceRecognition(id: number, representativeUrl?: string): Promise<PolicySource> {
+  const payload = representativeUrl ? { representative_url: representativeUrl } : {};
+  return (await http.post<PolicySource>(`/sources/${id}/recognition-retries`, payload)).data;
 }
 
-export async function toggleSource(id: number): Promise<PolicySource> {
-  return (await http.post<PolicySource>(`/sources/${id}/toggle`)).data;
+export async function enableSource(id: number, expectedVersion: number): Promise<PolicySource> {
+  return (await http.post<PolicySource>(`/sources/${id}/enable`, { expected_version: expectedVersion })).data;
+}
+
+export async function disableSource(id: number, expectedVersion: number): Promise<PolicySource> {
+  return (await http.post<PolicySource>(`/sources/${id}/disable`, { expected_version: expectedVersion })).data;
 }

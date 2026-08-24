@@ -25,6 +25,10 @@ const publicBusinessMessages: Record<string, string> = {
 const fallbackMessage = "操作未完成，请稍后重试。";
 
 function detailCode(error: unknown): string | null {
+  return getBusinessErrorCode(error)?.code ?? null;
+}
+
+export function getBusinessErrorCode(error: unknown): { code: string; currentVersion?: number } | null {
   if (!error || typeof error !== "object") return null;
   const response = (error as { response?: unknown }).response;
   if (!response || typeof response !== "object") return null;
@@ -33,7 +37,11 @@ function detailCode(error: unknown): string | null {
   const detail = (data as { detail?: unknown }).detail;
   if (!detail || typeof detail !== "object") return null;
   const code = (detail as { code?: unknown }).code;
-  return typeof code === "string" ? code : null;
+  if (typeof code !== "string") return null;
+  const currentVersion = (detail as { current_version?: unknown }).current_version;
+  if (currentVersion === undefined) return { code };
+  if (typeof currentVersion !== "number" || !Number.isInteger(currentVersion)) return null;
+  return { code, currentVersion };
 }
 
 export function businessErrorMessage(error: unknown, fallback = fallbackMessage): string {
