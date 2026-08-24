@@ -13,6 +13,7 @@ def _source_and_channel(db: Session, owner) -> tuple[PolicySource, SourceChannel
         home_url="https://example.test",
         adapter_key="gdii",
         adapter_status="ready",
+        recognition_status="enabled",
         is_enabled=True,
         created_by=owner.id,
         updated_by=owner.id,
