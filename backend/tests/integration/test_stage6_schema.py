@@ -99,6 +99,10 @@ def _insert_stage5_records(connection: Connection) -> None:
 def test_stage6_upgrade_preserves_stage5_records_and_backfills_safe_defaults(
     stage6_connection: Connection,
 ) -> None:
+    source_columns = {
+        column["name"]: column
+        for column in inspect(stage6_connection).get_columns("policy_sources")
+    }
     source = stage6_connection.execute(
         text(
             "SELECT entry_url, adapter_key, recognition_status, recognition_kind, "
@@ -126,6 +130,10 @@ def test_stage6_upgrade_preserves_stage5_records_and_backfills_safe_defaults(
     assert source["recognition_summary"] == "Migrated legacy source"
     assert source["region_labels"] == "[]"
     assert source["topic_labels"] == "[]"
+    for label_column in ("region_labels", "topic_labels"):
+        assert source_columns[label_column]["nullable"] is False
+        assert source_columns[label_column]["default"] is None
+        assert PolicySource.__table__.c[label_column].server_default is None
     assert source["is_enabled"] == 1
     assert source["version"] == 1
     assert dict(pending) == {

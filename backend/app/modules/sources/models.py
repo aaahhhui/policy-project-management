@@ -61,10 +61,10 @@ class PolicySource(Base, TimestampMixin):
     adapter_status: Mapped[str] = mapped_column(ADAPTER_STATUS_TYPE, nullable=False)
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
     region_labels: Mapped[list[str]] = mapped_column(
-        JSON, nullable=False, default=list, server_default="[]"
+        JSON, nullable=False, default=list
     )
     topic_labels: Mapped[list[str]] = mapped_column(
-        JSON, nullable=False, default=list, server_default="[]"
+        JSON, nullable=False, default=list
     )
     recognition_status: Mapped[str] = mapped_column(
         SOURCE_RECOGNITION_STATUS_TYPE,

@@ -51,10 +51,10 @@ def upgrade() -> None:
             "home_url", existing_type=sa.String(length=2048), new_column_name="entry_url"
         )
         batch_op.add_column(
-            sa.Column("region_labels", sa.JSON(), nullable=False, server_default=sa.text("'[]'"))
+            sa.Column("region_labels", sa.JSON(), nullable=True)
         )
         batch_op.add_column(
-            sa.Column("topic_labels", sa.JSON(), nullable=False, server_default=sa.text("'[]'"))
+            sa.Column("topic_labels", sa.JSON(), nullable=True)
         )
         batch_op.add_column(
             sa.Column(
@@ -73,6 +73,20 @@ def upgrade() -> None:
         batch_op.add_column(sa.Column("enabled_at", sa.DateTime(timezone=True), nullable=True))
         batch_op.add_column(sa.Column("disabled_at", sa.DateTime(timezone=True), nullable=True))
         batch_op.add_column(sa.Column("version", sa.Integer(), nullable=False, server_default="1"))
+
+    op.execute(
+        sa.text(
+            "UPDATE policy_sources SET region_labels = :empty_labels, "
+            "topic_labels = :empty_labels"
+        ).bindparams(empty_labels="[]")
+    )
+    with op.batch_alter_table("policy_sources") as batch_op:
+        batch_op.alter_column(
+            "region_labels", existing_type=sa.JSON(), existing_nullable=True, nullable=False
+        )
+        batch_op.alter_column(
+            "topic_labels", existing_type=sa.JSON(), existing_nullable=True, nullable=False
+        )
 
     op.execute(
         sa.text(
