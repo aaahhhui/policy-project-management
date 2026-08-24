@@ -1,197 +1,109 @@
 import { mount } from "@vue/test-utils";
 import ElementPlus from "element-plus";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createSource, getSources, toggleSource } from "../../src/api/sources";
-import { collectSource, getCollectionTask } from "../../src/api/collection";
+import { createSource, disableSource, enableSource, getSources, retrySourceRecognition, type PolicySource } from "../../src/api/sources";
+import { clearCurrentUser, currentUser } from "../../src/auth/state";
 import PolicySourcesView from "../../src/views/PolicySourcesView.vue";
 
 vi.mock("../../src/api/sources", () => ({
-  getSources: vi.fn(),
-  createSource: vi.fn(),
-  updateSource: vi.fn(),
-  toggleSource: vi.fn(),
+  getSources: vi.fn(), createSource: vi.fn(), retrySourceRecognition: vi.fn(), enableSource: vi.fn(), disableSource: vi.fn(),
 }));
 
-vi.mock("../../src/api/collection", () => ({
-  collectSource: vi.fn(),
-  getCollectionTask: vi.fn(),
-}));
+function setViewportWidth(width: number): void {
+  const query = "(max-width: 720px)";
+  Object.defineProperty(window, "matchMedia", { configurable: true, value: vi.fn().mockImplementation((value: string) => ({
+    matches: value === query && width <= 720, media: value, addEventListener: vi.fn(), removeEventListener: vi.fn(),
+  })) });
+}
 
-const pendingSource = {
-  id: 1,
-  name: "Custom source",
-  home_url: "https://example.com",
-  adapter_status: "pending" as const,
-  is_enabled: true,
-  created_by: 1,
-  updated_by: 1,
-  channels: [],
-  latest_collection_at: null,
-  latest_result: null,
+const baseSource: PolicySource = {
+  id: 1, name: "广东省科技业务管理阳光政务平台", entry_url: "https://public.example/guangdong", region_labels: ["广东"], topic_labels: ["科技"],
+  recognition_status: "recognizing", recognition_kind: null, recognition_summary: "正在核验公开入口。", previewed_at: null, owner_confirmed_at: null,
+  enabled_at: null, disabled_at: null, version: 3, latest_collection_at: null, latest_result: null,
 };
 
-const readySource = { ...pendingSource, id: 2, name: "Guangdong", adapter_status: "ready" as const };
+function page(items: PolicySource[], pageNumber = 1, total = items.length) { return { items, page: pageNumber, page_size: 20, total }; }
+function mountView() { return mount(PolicySourcesView, { global: { plugins: [ElementPlus] } }); }
 
 describe("PolicySourcesView", () => {
-  it("makes a pending adaptation unmistakable without rendering a collection control", async () => {
-    vi.mocked(getSources).mockResolvedValue([pendingSource]);
-    const wrapper = mount(PolicySourcesView, { global: { plugins: [ElementPlus] } });
-
-    await vi.dynamicImportSettled();
-
-    expect(wrapper.get("h1").text()).toBe("政策来源");
-    expect(wrapper.text()).toContain("待适配");
-    expect(wrapper.text()).not.toContain("立即采集");
-    expect(wrapper.find("button[aria-label*='立即采集']").exists()).toBe(false);
+  beforeEach(() => {
+    vi.clearAllMocks(); clearCurrentUser();
+    currentUser.value = { id: 1, login_name: "owner", display_name: "负责人", roles: ["applicant_owner"] };
+    setViewportWidth(1024);
   });
 
-  it("shows loading, an actionable loading error, and an empty-state invitation", async () => {
-    let resolveSources: (value: typeof pendingSource[]) => void;
-    vi.mocked(getSources).mockReturnValue(
-      new Promise((resolve) => {
-        resolveSources = resolve;
-      }),
-    );
-    const wrapper = mount(PolicySourcesView, { global: { plugins: [ElementPlus] } });
-    expect(wrapper.get("[role=status]").text()).toContain("正在加载");
-
-    resolveSources!([]);
-    await vi.dynamicImportSettled();
-    expect(wrapper.get("[data-testid='empty-sources']").text()).toContain("添加来源");
-    wrapper.unmount();
-
-    vi.mocked(getSources).mockReset();
-    vi.mocked(getSources).mockRejectedValue(new Error("network"));
-    const errorWrapper = mount(PolicySourcesView, { global: { plugins: [ElementPlus] } });
-    await vi.dynamicImportSettled();
-    expect(errorWrapper.get("[role=alert]").text()).toContain("无法加载政策来源");
+  it("renders business lifecycle labels and keeps recognition summaries as text", async () => {
+    vi.mocked(getSources).mockResolvedValue(page([
+      baseSource, { ...baseSource, id: 2, recognition_status: "ready_to_enable", recognition_summary: "广东省科技业务管理阳光政务平台" },
+      { ...baseSource, id: 3, recognition_status: "enabled" }, { ...baseSource, id: 4, recognition_status: "pending_verification" },
+      { ...baseSource, id: 5, recognition_status: "rejected", recognition_summary: "<strong>入口无法使用</strong>" }, { ...baseSource, id: 6, recognition_status: "disabled" },
+    ]));
+    const wrapper = mountView(); await vi.dynamicImportSettled();
+    for (const label of ["识别中", "可启用", "已启用", "待人工确认", "无法使用", "已停用"]) expect(wrapper.text()).toContain(label);
+    expect(wrapper.text()).toContain("<strong>入口无法使用</strong>");
+    expect(wrapper.find("strong").exists()).toBe(false);
   });
 
-  it("creates an enabled source without offering or serializing an ignored enabled choice", async () => {
-    vi.mocked(getSources).mockResolvedValue([]);
-    vi.mocked(createSource).mockResolvedValue(pendingSource);
-    const wrapper = mount(PolicySourcesView, { attachTo: document.body, global: { plugins: [ElementPlus] } });
-    await vi.dynamicImportSettled();
-
-    await wrapper.get("button[aria-label='添加政策来源']").trigger("click");
-    expect(document.body.querySelector("[role=dialog] h2")?.textContent).toContain("添加政策来源");
-    expect(document.body.querySelector("label[for='source-name']")?.textContent).toContain("来源名称");
-    expect(document.body.querySelector("button[aria-label='添加栏目']")).not.toBeNull();
-    expect(document.body.querySelector("label[for='source-enabled']")).toBeNull();
-
-    const name = document.body.querySelector("#source-name") as HTMLInputElement;
-    const homeUrl = document.body.querySelector("#source-home-url") as HTMLInputElement;
-    name.value = "Created source";
-    homeUrl.value = "https://created.example";
-    name.dispatchEvent(new Event("input"));
-    homeUrl.dispatchEvent(new Event("input"));
-    document.body.querySelector(".source-form")?.dispatchEvent(new Event("submit", { cancelable: true }));
-    await vi.dynamicImportSettled();
-
-    expect(createSource).toHaveBeenCalledWith({
-      name: "Created source",
-      home_url: "https://created.example",
-      channels: [],
-    });
-    wrapper.unmount();
+  it("shows safe preview and enable only for a ready source", async () => {
+    const ready = { ...baseSource, name: "Feed", recognition_status: "ready_to_enable" as const, recognition_summary: "广东省科技业务管理阳光政务平台" };
+    vi.mocked(getSources).mockResolvedValue(page([ready])); vi.mocked(enableSource).mockResolvedValue({ ...ready, recognition_status: "enabled", version: 4 });
+    const wrapper = mountView(); await vi.dynamicImportSettled();
+    expect(wrapper.text()).toContain("预览：广东省科技业务管理阳光政务平台");
+    await wrapper.get("button[aria-label='启用 Feed']").trigger("click");
+    expect(enableSource).toHaveBeenCalledWith(1, 3); expect(wrapper.text()).toContain("已启用");
   });
 
-  it.each([
-    [409, "该来源名称已存在"],
-    [422, "名称、官网地址或栏目内容不符合要求"],
-  ])("maps a source save response with status %s to a useful form error", async (status, message) => {
-    vi.mocked(getSources).mockResolvedValue([]);
-    vi.mocked(createSource).mockRejectedValue({ response: { status } });
-    const wrapper = mount(PolicySourcesView, { attachTo: document.body, global: { plugins: [ElementPlus] } });
-    await vi.dynamicImportSettled();
-
-    await wrapper.get("button[aria-label='添加政策来源']").trigger("click");
-    const name = document.body.querySelector("#source-name") as HTMLInputElement;
-    const homeUrl = document.body.querySelector("#source-home-url") as HTMLInputElement;
-    name.value = "Created source";
-    homeUrl.value = "https://created.example";
-    name.dispatchEvent(new Event("input"));
-    homeUrl.dispatchEvent(new Event("input"));
-    document.body.querySelector(".source-form")?.dispatchEvent(new Event("submit", { cancelable: true }));
-    await vi.dynamicImportSettled();
-
-    expect(document.body.querySelector("[role=dialog] [role=alert]")?.textContent).toContain(message);
-    wrapper.unmount();
+  it("offers retry only for pending or rejected sources and disable only for enabled sources", async () => {
+    vi.mocked(getSources).mockResolvedValue(page([
+      { ...baseSource, id: 2, name: "待确认", recognition_status: "pending_verification" }, { ...baseSource, id: 3, name: "无法识别", recognition_status: "rejected" },
+      { ...baseSource, id: 4, name: "已启用来源", recognition_status: "enabled" }, { ...baseSource, id: 5, name: "识别中来源", recognition_status: "recognizing" },
+    ]));
+    const wrapper = mountView(); await vi.dynamicImportSettled();
+    expect(wrapper.find("button[aria-label='重新识别 待确认']").exists()).toBe(true);
+    expect(wrapper.find("button[aria-label='重新识别 无法识别']").exists()).toBe(true);
+    expect(wrapper.find("button[aria-label='停用 已启用来源']").exists()).toBe(true);
+    expect(wrapper.find("button[aria-label='启用 识别中来源']").exists()).toBe(false);
+    expect(wrapper.find("button[aria-label='停用 识别中来源']").exists()).toBe(false);
+    expect(wrapper.find("button[aria-label='立即采集 已启用来源']").exists()).toBe(false);
   });
 
-  it("issues one toggle request while a row is pending and restores its controls on success", async () => {
-    vi.mocked(getSources).mockResolvedValue([pendingSource]);
-    let resolveToggle: (value: typeof pendingSource) => void;
-    vi.mocked(toggleSource).mockReturnValue(
-      new Promise((resolve) => {
-        resolveToggle = resolve;
-      }),
-    );
-    const wrapper = mount(PolicySourcesView, { global: { plugins: [ElementPlus] } });
-    await vi.dynamicImportSettled();
-
-    const [edit, toggle] = wrapper.findAll(".actions button");
-    await toggle.trigger("click");
-    await toggle.trigger("click");
-    expect(toggleSource).toHaveBeenCalledTimes(1);
-    expect(edit.attributes("disabled")).toBeDefined();
-    expect(toggle.attributes("disabled")).toBeDefined();
-
-    resolveToggle!(pendingSource);
-    await vi.waitFor(() => {
-      const [restoredEdit, restoredToggle] = wrapper.findAll(".actions button");
-      expect(restoredEdit.attributes("disabled")).toBeUndefined();
-      expect(restoredToggle.attributes("disabled")).toBeUndefined();
-    });
+  it("reloads page two through getSources", async () => {
+    vi.mocked(getSources).mockResolvedValueOnce(page([{ ...baseSource, name: "第一页来源" }], 1, 21)).mockResolvedValueOnce(page([{ ...baseSource, id: 2, name: "第二页来源" }], 2, 21));
+    const wrapper = mountView(); await vi.dynamicImportSettled(); await wrapper.get("button[aria-label='下一页来源']").trigger("click"); await vi.dynamicImportSettled();
+    expect(getSources).toHaveBeenNthCalledWith(1, 1, 20); expect(getSources).toHaveBeenNthCalledWith(2, 2, 20); expect(wrapper.text()).toContain("第二页来源");
   });
 
-  it("restores row controls and shows an error after a toggle failure", async () => {
-    vi.mocked(getSources).mockResolvedValue([pendingSource]);
-    vi.mocked(toggleSource).mockRejectedValue(new Error("network"));
-    const wrapper = mount(PolicySourcesView, { global: { plugins: [ElementPlus] } });
-    await vi.dynamicImportSettled();
-
-    const [edit, toggle] = wrapper.findAll(".actions button");
-    await toggle.trigger("click");
-    await vi.dynamicImportSettled();
-
-    expect(edit.attributes("disabled")).toBeUndefined();
-    expect(toggle.attributes("disabled")).toBeUndefined();
-    expect(wrapper.get("[role=alert]").text()).toContain("无法更新来源状态");
+  it("gives reload guidance for a version conflict without reapplying a stale enable", async () => {
+    const ready = { ...baseSource, name: "Feed", recognition_status: "ready_to_enable" as const };
+    vi.mocked(getSources).mockResolvedValue(page([ready]));
+    vi.mocked(enableSource).mockRejectedValue({ response: { status: 409, data: { detail: { code: "source_version_conflict", current_version: 4 } } } });
+    const wrapper = mountView(); await vi.dynamicImportSettled(); await wrapper.get("button[aria-label='启用 Feed']").trigger("click"); await vi.dynamicImportSettled();
+    expect(enableSource).toHaveBeenCalledTimes(1); expect(getSources).toHaveBeenCalledTimes(1);
+    expect(wrapper.get("[role='alert']").text()).toContain("来源已被更新，请重新加载后再操作");
   });
 
-  it("polls a manually triggered task until partial failure remains visible", async () => {
-    vi.useFakeTimers();
-    vi.mocked(getSources).mockResolvedValue([readySource]);
-    vi.mocked(collectSource).mockResolvedValue({
-      id: 42,
-      source_id: readySource.id,
-      status: "pending",
-      discovered_count: 0,
-      succeeded_count: 0,
-      failed_count: 0,
-      items: [],
-    });
-    vi.mocked(getCollectionTask).mockResolvedValue({
-      id: 42,
-      source_id: readySource.id,
-      status: "partial_failed",
-      discovered_count: 2,
-      succeeded_count: 1,
-      failed_count: 1,
-      items: [{ id: 9, status: "failed", error_message: "snapshot failed" }],
-    });
-    const wrapper = mount(PolicySourcesView, { global: { plugins: [ElementPlus] } });
-    await vi.dynamicImportSettled();
+  it("keeps mobile source status, preview, and history but hides every mutation control", async () => {
+    setViewportWidth(640);
+    const ready = { ...baseSource, recognition_status: "ready_to_enable" as const, recognition_summary: "广东省科技业务管理阳光政务平台", latest_collection_at: "2026-08-20T08:00:00Z", latest_result: "succeeded" };
+    vi.mocked(getSources).mockResolvedValue(page([ready]));
+    const wrapper = mountView(); await vi.dynamicImportSettled();
+    expect(wrapper.text()).toContain("可启用"); expect(wrapper.text()).toContain("预览：广东省科技业务管理阳光政务平台"); expect(wrapper.text()).toContain("最近采集");
+    for (const label of ["添加政策来源", "重新识别", "启用 Feed", "停用"]) expect(wrapper.find(`button[aria-label*='${label}']`).exists()).toBe(false);
+  });
 
-    await wrapper.get("button[aria-label='立即采集 Guangdong']").trigger("click");
-    expect(wrapper.text()).toContain("任务 #42");
-    await vi.advanceTimersByTimeAsync(3000);
+  it("keeps a reader read-only on desktop", async () => {
+    currentUser.value = { id: 2, login_name: "reader", display_name: "阅读者", roles: ["reader"] };
+    vi.mocked(getSources).mockResolvedValue(page([{ ...baseSource, recognition_status: "enabled" }]));
+    const wrapper = mountView(); await vi.dynamicImportSettled();
+    expect(wrapper.text()).toContain("已启用"); expect(wrapper.find("button").exists()).toBe(false);
+  });
 
-    expect(getCollectionTask).toHaveBeenCalledWith(42);
-    expect(wrapper.text()).toContain("部分失败");
-    expect(wrapper.text()).toContain("snapshot failed");
-    vi.useRealTimers();
+  it("reloads after recognition retry without a hidden automatic stale action", async () => {
+    vi.mocked(getSources).mockResolvedValue(page([{ ...baseSource, recognition_status: "pending_verification" }]));
+    vi.mocked(retrySourceRecognition).mockResolvedValue({ ...baseSource, recognition_status: "recognizing", version: 4 });
+    const wrapper = mountView(); await vi.dynamicImportSettled();
+    await wrapper.get("button[aria-label='重新识别 广东省科技业务管理阳光政务平台']").trigger("click"); await vi.dynamicImportSettled();
+    expect(retrySourceRecognition).toHaveBeenCalledWith(1); expect(getSources).toHaveBeenCalledTimes(2); expect(createSource).not.toHaveBeenCalled();
   });
 });
