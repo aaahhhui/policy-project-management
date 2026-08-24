@@ -3,7 +3,7 @@ import ElementPlus from "element-plus";
 import { nextTick } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { getBusinessEntities, getSharedProfile, updateSharedProfile } from "../../src/api/profiles";
+import { getBusinessEntities, getSharedProfile, updateBusinessEntity, updateSharedProfile } from "../../src/api/profiles";
 import { clearCurrentUser, currentUser } from "../../src/auth/state";
 import EnterpriseProfileView from "../../src/views/EnterpriseProfileView.vue";
 
@@ -53,12 +53,13 @@ vi.mock("../../src/api/profiles", () => ({
 function setViewportWidth(width: number) {
   const query = "(max-width: 720px)"; let mobile = width <= 720;
   const listeners = new Set<(event: MediaQueryListEvent) => void>();
+  const removeEventListener = vi.fn((_type: string, listener: (event: MediaQueryListEvent) => void) => listeners.delete(listener));
   Object.defineProperty(window, "matchMedia", { configurable: true, value: vi.fn().mockImplementation((value: string) => ({
     matches: value === query && mobile, media: value,
     addEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) => listeners.add(listener),
-    removeEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) => listeners.delete(listener),
+    removeEventListener,
   })) });
-  return { setWidth: (next: number) => { mobile = next <= 720; listeners.forEach((listener) => listener({ matches: mobile } as MediaQueryListEvent)); } };
+  return { removeEventListener, setWidth: (next: number) => { mobile = next <= 720; listeners.forEach((listener) => listener({ matches: mobile } as MediaQueryListEvent)); } };
 }
 
 describe("EnterpriseProfileView", () => {
@@ -158,5 +159,27 @@ describe("EnterpriseProfileView", () => {
     expect(owner.text()).toContain("适创科技"); expect(owner.text()).toContain("最近审计");
     expect(owner.find("button[aria-label='编辑公司共享档案']").exists()).toBe(false);
     expect(owner.find("button[aria-label='编辑企业主体 ENTITY-BEIJING']").exists()).toBe(false);
+  });
+
+  it("replaces only the saved entity while preserving seed order, hostile audit text, and media cleanup", async () => {
+    const viewport = setViewportWidth(1024);
+    vi.mocked(getBusinessEntities).mockResolvedValue([
+      { seed_code: "ENTITY-SHENZHEN", legal_name: "深圳适创腾扬科技有限公司", data: { registered_region: { city: "深圳市" } }, verification_status: "pending_business_license_review", version: 3, recent_audits: [{ id: 33, action: "business_entity_updated", actor_id: 1, actor_display_name: "<img src=x>", object_type: "business_entity", object_id: 3, changed_fields: ["legal_name"], before_values: { legal_name: "<img src=x>" }, after_values: { legal_name: "<script>alert(1)</script>" }, occurred_at: "2026-08-20" }] },
+      { seed_code: "ENTITY-BEIJING", legal_name: "北京适创科技有限公司", data: { registered_region: { city: "北京市" } }, verification_status: "pending_business_license_review", version: 1, recent_audits: [] },
+    ]);
+    vi.mocked(updateBusinessEntity).mockResolvedValue({ seed_code: "ENTITY-SHENZHEN", legal_name: "深圳更新主体", data: { registered_region: { city: "深圳市" } }, verification_status: "pending_business_license_review", version: 4, recent_audits: [] });
+    const wrapper = mount(EnterpriseProfileView, { global: { plugins: [ElementPlus] } }); await vi.dynamicImportSettled();
+
+    expect(wrapper.text()).toContain("<script>alert(1)</script>");
+    expect(wrapper.find("script").exists()).toBe(false); expect(wrapper.find("img").exists()).toBe(false);
+    await wrapper.get("button[aria-label='编辑企业主体 ENTITY-SHENZHEN']").trigger("click");
+    await wrapper.get("input[aria-label='企业主体名称']").setValue("深圳更新主体");
+    await wrapper.get("form").trigger("submit");
+    expect(wrapper.findAll(".entity-code").map((card) => card.text())).toEqual(["ENTITY-BEIJING", "ENTITY-SHENZHEN"]);
+    expect(wrapper.text()).toContain("深圳更新主体");
+    viewport.setWidth(640); await nextTick();
+    expect(wrapper.find("button[aria-label='编辑企业主体 ENTITY-SHENZHEN']").exists()).toBe(false);
+    wrapper.unmount();
+    expect(viewport.removeEventListener).toHaveBeenCalledWith("change", expect.any(Function));
   });
 });

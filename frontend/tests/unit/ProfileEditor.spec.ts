@@ -38,13 +38,86 @@ describe("ProfileEditor", () => {
   });
 
   it("submits only changed entity fields with the current expected version", async () => {
-    vi.mocked(updateBusinessEntity).mockResolvedValue({ ...entity, legal_name: "深圳适创科技有限公司", version: 4 });
+    vi.mocked(updateBusinessEntity).mockResolvedValue({ ...entity, legal_name: "深圳适创科技有限公司", data: { city: "深圳", sectors: ["工业软件"] }, verification_status: "pending_review", version: 4 });
     const wrapper = mount(ProfileEditor, { props: { target: "entity", profile: entity } });
 
     await wrapper.get("input[aria-label='企业主体名称']").setValue("深圳适创科技有限公司");
+    await wrapper.get("textarea[aria-label='档案结构化数据']").setValue('{"city":"深圳","sectors":["工业软件"]}');
+    await wrapper.get("input[aria-label='核验状态']").setValue("pending_review");
     await wrapper.get("form").trigger("submit");
 
-    expect(updateBusinessEntity).toHaveBeenCalledWith("ENTITY-SHENZHEN", { expected_version: 3, legal_name: "深圳适创科技有限公司" });
+    expect(updateBusinessEntity).toHaveBeenCalledWith("ENTITY-SHENZHEN", { expected_version: 3, legal_name: "深圳适创科技有限公司", data: { city: "深圳", sectors: ["工业软件"] }, verification_status: "pending_review" });
+    expect(wrapper.emitted("updated")?.[0]).toEqual([{ ...entity, legal_name: "深圳适创科技有限公司", data: { city: "深圳", sectors: ["工业软件"] }, verification_status: "pending_review", version: 4 }]);
+  });
+
+  it("normalizes the 255-character name and 64-character status before comparing and sending", async () => {
+    const name = "企".repeat(255); const status = "a".repeat(64);
+    vi.mocked(updateSharedProfile).mockResolvedValue({ ...shared, display_name: name, verification_status: status, version: 2 });
+    const wrapper = mount(ProfileEditor, { props: { target: "shared", profile: shared } });
+
+    await wrapper.get("input[aria-label='公司名称']").setValue(` ${name} `);
+    await wrapper.get("input[aria-label='核验状态']").setValue(` ${status} `);
+    await wrapper.get("form").trigger("submit");
+
+    expect(updateSharedProfile).toHaveBeenCalledWith({ expected_version: 1, display_name: name, verification_status: status });
+  });
+
+  it("does not send a no-op patch when whitespace normalizes to the current profile", async () => {
+    const wrapper = mount(ProfileEditor, { props: { target: "shared", profile: shared } });
+    await wrapper.get("input[aria-label='公司名称']").setValue("  适创科技  ");
+    await wrapper.get("input[aria-label='核验状态']").setValue("  public_verified  ");
+    await wrapper.get("form").trigger("submit");
+    expect(updateSharedProfile).not.toHaveBeenCalled();
+    expect(wrapper.get("[role=alert]").text()).toContain("没有可保存的变更");
+  });
+
+  it("keeps invalid name/status boundaries and patterns local", async () => {
+    const wrapper = mount(ProfileEditor, { props: { target: "shared", profile: shared } });
+    await wrapper.get("input[aria-label='公司名称']").setValue("x".repeat(256));
+    await wrapper.get("form").trigger("submit");
+    expect(wrapper.get("[role=alert]").text()).toContain("255");
+
+    await wrapper.get("input[aria-label='公司名称']").setValue("适创科技");
+    await wrapper.get("input[aria-label='核验状态']").setValue("A-not-valid");
+    await wrapper.get("form").trigger("submit");
+    expect(wrapper.get("[role=alert]").text()).toContain("[a-z0-9_]+");
+
+    await wrapper.get("input[aria-label='核验状态']").setValue("a".repeat(65));
+    await wrapper.get("form").trigger("submit");
+    expect(wrapper.get("[role=alert]").text()).toContain("64");
+    expect(updateSharedProfile).not.toHaveBeenCalled();
+  });
+
+  it("accepts the backend-supported data shape and rejects deeper or malformed data locally", async () => {
+    vi.mocked(updateSharedProfile).mockResolvedValue({ ...shared, data: { label: "text", amount: 1, enabled: true, nullable: null, tags: ["a", 2, false, null], address: { city: "深圳", postal: 518000 } }, version: 2 });
+    const wrapper = mount(ProfileEditor, { props: { target: "shared", profile: shared } });
+    await wrapper.get("textarea[aria-label='档案结构化数据']").setValue('{"label":"text","amount":1,"enabled":true,"nullable":null,"tags":["a",2,false,null],"address":{"city":"深圳","postal":518000}}');
+    await wrapper.get("form").trigger("submit");
+    expect(updateSharedProfile).toHaveBeenCalledTimes(1);
+
+    for (const invalid of ['{"nested":{"too_deep":{"value":1}}}', '{"nested":[[1]]}', '{"":1}', `{"${"k".repeat(65)}":1}`]) {
+      const invalidWrapper = mount(ProfileEditor, { props: { target: "shared", profile: shared } });
+      await invalidWrapper.get("textarea[aria-label='档案结构化数据']").setValue(invalid);
+      await invalidWrapper.get("form").trigger("submit");
+      expect(invalidWrapper.get("[role=alert]").text()).toContain("档案结构化数据");
+    }
+    expect(updateSharedProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it("measures 32 KiB from compact canonical UTF-8 JSON instead of pretty input whitespace", async () => {
+    vi.mocked(updateSharedProfile).mockResolvedValue({ ...shared, data: { note: "中".repeat(10919) }, version: 2 });
+    const wrapper = mount(ProfileEditor, { props: { target: "shared", profile: shared } });
+    const nearLimit = { note: "中".repeat(10919) };
+    await wrapper.get("textarea[aria-label='档案结构化数据']").setValue(`${" ".repeat(40_000)}\n${JSON.stringify(nearLimit, null, 2)}`);
+    await wrapper.get("form").trigger("submit");
+    expect(updateSharedProfile).toHaveBeenCalledWith({ expected_version: 1, data: nearLimit });
+
+    const overLimit = { note: "中".repeat(10920) };
+    const overLimitWrapper = mount(ProfileEditor, { props: { target: "shared", profile: shared } });
+    await overLimitWrapper.get("textarea[aria-label='档案结构化数据']").setValue(JSON.stringify(overLimit, null, 2));
+    await overLimitWrapper.get("form").trigger("submit");
+    expect(overLimitWrapper.get("[role=alert]").text()).toContain("32 KiB");
+    expect(updateSharedProfile).toHaveBeenCalledTimes(1);
   });
 
   it("keeps malformed, oversized, and missing form values local and disables submit during a request", async () => {
