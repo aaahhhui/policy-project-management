@@ -4,12 +4,25 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import Connection, create_engine, insert, inspect, text
 from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import get_settings
 from app.modules.sources.models import PolicySource
+
+
+STAGE4_REVISION = "0008_stage4_notifications"
+STAGE6_REVISION = "0009_stage6_source_profile"
+
+
+def test_stage6_revision_follows_stage4_as_the_single_alembic_head() -> None:
+    config = Config(str(Path(__file__).parents[2] / "alembic.ini"))
+    script = ScriptDirectory.from_config(config)
+
+    assert script.get_heads() == [STAGE6_REVISION]
+    assert script.get_revision(STAGE6_REVISION).down_revision == STAGE4_REVISION
 
 
 @pytest.fixture
@@ -268,7 +281,7 @@ def test_stage6_downgrade_restores_stage5_source_shape(stage6_connection: Connec
     config = Config(str(Path(__file__).parents[2] / "alembic.ini"))
     config.attributes["connection"] = stage6_connection
 
-    command.downgrade(config, "0007_reconcile_eval_constraint")
+    command.downgrade(config, STAGE4_REVISION)
 
     columns = {column["name"] for column in inspect(stage6_connection).get_columns("policy_sources")}
     ready = stage6_connection.execute(
@@ -295,6 +308,25 @@ def test_stage6_downgrade_restores_stage5_source_shape(stage6_connection: Connec
     assert stage6_connection.execute(text("SELECT count(*) FROM collection_tasks")).scalar_one() == 1
     assert stage6_connection.execute(text("SELECT count(*) FROM enterprise_profiles")).scalar_one() == 1
     assert stage6_connection.execute(text("SELECT count(*) FROM business_entities")).scalar_one() == 3
+    assert {
+        "notification_deliveries",
+        "notification_attempts",
+        "source_health_states",
+    } <= set(inspect(stage6_connection).get_table_names())
+
+    command.upgrade(config, STAGE6_REVISION)
+
+    upgraded_columns = {
+        column["name"]
+        for column in inspect(stage6_connection).get_columns("policy_sources")
+    }
+    assert "entry_url" in upgraded_columns
+    assert "home_url" not in upgraded_columns
+    assert {
+        "notification_deliveries",
+        "notification_attempts",
+        "source_health_states",
+    } <= set(inspect(stage6_connection).get_table_names())
 
 
 def test_stage6_downgrade_removes_named_recognition_checks_before_column_drop(
@@ -309,7 +341,7 @@ def test_stage6_downgrade_removes_named_recognition_checks_before_column_drop(
     }
     assert {"source_recognition_status_code", "source_recognition_kind_code"} <= check_names
 
-    command.downgrade(config, "0007_reconcile_eval_constraint")
+    command.downgrade(config, STAGE4_REVISION)
 
     remaining_check_names = {
         check["name"]

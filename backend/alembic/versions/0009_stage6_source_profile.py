@@ -1,7 +1,7 @@
 """add Stage 6 source and profile persistence fields
 
-Revision ID: 0008_stage6_source_profile
-Revises: 0007_reconcile_eval_constraint
+Revision ID: 0009_stage6_source_profile
+Revises: 0008_stage4_notifications
 Create Date: 2026-08-20
 """
 
@@ -11,8 +11,8 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision: str = "0008_stage6_source_profile"
-down_revision: str | None = "0007_reconcile_eval_constraint"
+revision: str = "0009_stage6_source_profile"
+down_revision: str | None = "0008_stage4_notifications"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

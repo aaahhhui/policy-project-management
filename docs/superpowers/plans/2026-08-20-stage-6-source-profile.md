@@ -31,7 +31,7 @@
 
 | File | Responsibility |
 | --- | --- |
-| `backend/alembic/versions/0008_stage6_source_profile.py` | Reversible schema change from revision `0007_reconcile_eval_constraint`: source lifecycle/preview/version columns, profile/entity versions, and safe audit lookup index. |
+| `backend/alembic/versions/0009_stage6_source_profile.py` | Reversible schema change after Stage 4 revision `0008_stage4_notifications`: source lifecycle/preview/version columns, profile/entity versions, and safe audit lookup index. |
 | `backend/app/modules/sources/models.py` | SQLAlchemy source recognition-state enum and persisted safe source configuration fields; retain historical channels/tasks. |
 | `backend/app/modules/sources/schemas.py` | Strict source input/output contracts, page envelopes, and public recognition/enable responses with no adapter implementation key. |
 | `backend/app/modules/sources/safety.py` | Pure URL canonicalization, DNS/IP public-address checks, safe redirect validation, and bounded safe error classification. |
@@ -241,7 +241,7 @@ export function updateBusinessEntity(seedCode: string, payload: BusinessEntityPa
 ### Task 1: Add the reversible Stage 6 persistence contract
 
 **Files:**
-- Create: `backend/alembic/versions/0008_stage6_source_profile.py`
+- Create: `backend/alembic/versions/0009_stage6_source_profile.py`
 - Modify: `backend/app/modules/sources/models.py`
 - Modify: `backend/app/modules/profiles/models.py`
 - Create: `backend/tests/integration/test_stage6_schema.py`
@@ -249,7 +249,7 @@ export function updateBusinessEntity(seedCode: string, payload: BusinessEntityPa
 - Modify: `backend/tests/unit/profiles/test_seed.py`
 
 **Interfaces:**
-- Consumes: existing `PolicySource.home_url`, `adapter_key`, `adapter_status`, `is_enabled`, historical `SourceChannel` rows, profile seed rows, and Alembic revision `0007_reconcile_eval_constraint`.
+- Consumes: existing `PolicySource.home_url`, `adapter_key`, `adapter_status`, `is_enabled`, historical `SourceChannel` rows, profile seed rows, and Stage 4 Alembic revision `0008_stage4_notifications`.
 - Produces: the model fields and persisted state described in **Shared Interfaces**. `policy_sources.home_url` is renamed to `entry_url`; legacy source channels/tasks remain unchanged. `adapter_key` remains nullable server-only storage. `version` defaults to `1` for source/profile/entity rows.
 
 - [ ] **Step 1: Write the failing migration/model tests**
@@ -272,7 +272,7 @@ Run:
 docker compose run --rm --no-deps api python -m pytest -q -p no:cacheprovider tests/integration/test_stage6_schema.py
 ```
 
-Expected: FAIL because revision `0008_stage6_source_profile` and the new model columns do not exist.
+Expected: FAIL because revision `0009_stage6_source_profile` and the new model columns do not exist.
 
 - [ ] **Step 3: Implement the smallest reversible migration and matching models**
 
@@ -307,7 +307,7 @@ Expected: PASS; migration upgrade/downgrade preserves Stage 5 rows and source/pr
 - [ ] **Step 5: Commit the persistence contract**
 
 ```powershell
-git add backend/alembic/versions/0008_stage6_source_profile.py backend/app/modules/sources/models.py backend/app/modules/profiles/models.py backend/tests/integration/test_stage6_schema.py backend/tests/unit/sources/test_service.py backend/tests/unit/profiles/test_seed.py
+git add backend/alembic/versions/0009_stage6_source_profile.py backend/app/modules/sources/models.py backend/app/modules/profiles/models.py backend/tests/integration/test_stage6_schema.py backend/tests/unit/sources/test_service.py backend/tests/unit/profiles/test_seed.py
 git commit -m "feat: add stage 6 source profile schema"
 ```
 

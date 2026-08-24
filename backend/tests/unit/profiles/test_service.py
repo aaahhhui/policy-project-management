@@ -4,7 +4,8 @@ from sqlalchemy import func, select
 
 from app.modules.audit.models import AuditEvent
 from app.modules.collection.models import CollectionTask
-from app.modules.evaluations.models import EvaluationBatch
+from app.modules.evaluations.models import EvaluationBatch, PolicyConclusionDecision
+from app.modules.notifications.models import NotificationAttempt, NotificationDelivery
 from app.modules.policies.models import Policy
 from app.modules.profiles.models import BusinessEntity, EnterpriseProfile
 from app.modules.profiles.schemas import (
@@ -13,6 +14,7 @@ from app.modules.profiles.schemas import (
     ProfileVersionConflict,
 )
 from app.modules.profiles.service import ProfileService
+from tests.unit.evaluations.test_conclusion_decision_service import confirmed_policy
 
 
 def _seed_profiles(db) -> None:
@@ -35,11 +37,13 @@ def _seed_profiles(db) -> None:
     db.commit()
 
 
-def _side_effect_counts(db) -> tuple[int, int, int]:
+def _side_effect_counts(db) -> tuple[int, int, int, int, int]:
     return (
         db.scalar(select(func.count()).select_from(Policy)) or 0,
         db.scalar(select(func.count()).select_from(EvaluationBatch)) or 0,
         db.scalar(select(func.count()).select_from(CollectionTask)) or 0,
+        db.scalar(select(func.count()).select_from(NotificationDelivery)) or 0,
+        db.scalar(select(func.count()).select_from(NotificationAttempt)) or 0,
     )
 
 
@@ -83,6 +87,82 @@ def test_shared_update_versions_audits_and_redacts_changed_values(db, seeded_own
         },
     }
     assert updated.recent_audits[0].after_values["data.authorization_header"] == "[redacted]"
+
+
+def test_shared_update_preserves_manual_policy_conclusion_and_creates_no_stage4_notifications(
+    db, seeded_owner
+) -> None:
+    evaluation_service, policy, _ = confirmed_policy(db, seeded_owner)
+    manual_decision = evaluation_service.adjust_conclusion(
+        policy.id,
+        "not_recommended",
+        "人工复核后不建议申报",
+        seeded_owner.id,
+    )
+    assert manual_decision.source == "manual_override"
+    assert policy.current_conclusion_source == "manual_override"
+
+    db.add(
+        EnterpriseProfile(
+            code="COMPANY-SHARED",
+            display_name="适创科技",
+            data={"contact_email": "contacts@supreium.com"},
+            verification_status="public_verified",
+        )
+    )
+    db.commit()
+
+    before_side_effects = _side_effect_counts(db)
+    before_projection = (
+        policy.current_evaluation_batch_id,
+        policy.current_conclusion,
+        policy.conclusion_confirmed,
+        policy.current_conclusion_source,
+        policy.conclusion_confirmed_at,
+    )
+    before_manual_decisions = list(
+        db.execute(
+            select(
+                PolicyConclusionDecision.id,
+                PolicyConclusionDecision.evaluation_batch_id,
+                PolicyConclusionDecision.previous_conclusion,
+                PolicyConclusionDecision.conclusion,
+                PolicyConclusionDecision.source,
+                PolicyConclusionDecision.reason,
+                PolicyConclusionDecision.decided_by,
+                PolicyConclusionDecision.decided_at,
+            ).where(PolicyConclusionDecision.policy_id == policy.id)
+        ).all()
+    )
+
+    updated = ProfileService(db).update_shared(
+        ProfilePatchInput(expected_version=1, display_name="适创科技（更新）"),
+        seeded_owner,
+    )
+
+    assert updated.version == 2
+    assert _side_effect_counts(db) == before_side_effects
+    assert (
+        policy.current_evaluation_batch_id,
+        policy.current_conclusion,
+        policy.conclusion_confirmed,
+        policy.current_conclusion_source,
+        policy.conclusion_confirmed_at,
+    ) == before_projection
+    assert list(
+        db.execute(
+            select(
+                PolicyConclusionDecision.id,
+                PolicyConclusionDecision.evaluation_batch_id,
+                PolicyConclusionDecision.previous_conclusion,
+                PolicyConclusionDecision.conclusion,
+                PolicyConclusionDecision.source,
+                PolicyConclusionDecision.reason,
+                PolicyConclusionDecision.decided_by,
+                PolicyConclusionDecision.decided_at,
+            ).where(PolicyConclusionDecision.policy_id == policy.id)
+        ).all()
+    ) == before_manual_decisions
 
 
 def test_entity_update_requires_current_version_and_does_not_audit_stale_write(db, seeded_owner):
