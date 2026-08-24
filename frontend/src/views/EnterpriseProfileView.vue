@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 
 import {
   getBusinessEntities,
@@ -7,12 +7,19 @@ import {
   type BusinessEntityResponse,
   type ProfileResponse,
 } from "../api/profiles";
+import { currentUser } from "../auth/state";
+import ProfileAuditList from "../components/profiles/ProfileAuditList.vue";
+import ProfileEditor from "../components/profiles/ProfileEditor.vue";
 import VerificationBadge from "../components/VerificationBadge.vue";
 
 const sharedProfile = ref<ProfileResponse | null>(null);
 const entities = ref<BusinessEntityResponse[]>([]);
 const loading = ref(true);
 const loadError = ref("");
+const mediaQuery = window.matchMedia("(max-width: 720px)");
+const mobile = ref(mediaQuery.matches);
+const activeEditor = ref<"shared" | string | null>(null);
+const canWrite = computed(() => !mobile.value && currentUser.value?.roles.includes("applicant_owner") === true);
 
 const expectedEntities = [
   { seedCode: "ENTITY-BEIJING", city: "北京" },
@@ -92,7 +99,19 @@ async function loadProfile() {
   }
 }
 
-onMounted(loadProfile);
+function updateMobile(event: MediaQueryListEvent): void { mobile.value = event.matches; }
+function replaceShared(profile: ProfileResponse | BusinessEntityResponse): void {
+  if ("display_name" in profile) sharedProfile.value = profile;
+  activeEditor.value = null;
+}
+function replaceEntity(profile: ProfileResponse | BusinessEntityResponse): void {
+  if ("seed_code" in profile) entities.value = entities.value.map((item) => item.seed_code === profile.seed_code ? profile : item);
+  activeEditor.value = null;
+}
+function reloadProfile(): void { activeEditor.value = null; void loadProfile(); }
+
+onMounted(() => { mediaQuery.addEventListener("change", updateMobile); void loadProfile(); });
+onUnmounted(() => mediaQuery.removeEventListener("change", updateMobile));
 </script>
 
 <template>
@@ -121,6 +140,10 @@ onMounted(loadProfile);
             <dd>{{ value }}</dd>
           </template>
         </dl>
+        <div class="version-trail"><span>版本 {{ sharedProfile.version }}</span><span>最近审计证据</span></div>
+        <button v-if="canWrite && activeEditor !== 'shared'" class="edit-button" type="button" aria-label="编辑公司共享档案" @click="activeEditor = 'shared'">编辑共享档案</button>
+        <ProfileEditor v-if="canWrite && activeEditor === 'shared'" target="shared" :profile="sharedProfile" @updated="replaceShared" @reload="reloadProfile" />
+        <ProfileAuditList :audits="sharedProfile.recent_audits" />
       </section>
 
       <section class="entities" aria-labelledby="entities-title">
@@ -157,6 +180,10 @@ onMounted(loadProfile);
             </div>
           </dl>
           <p v-if="candidateCapital(entity.data)" class="candidate-note">{{ candidateCapital(entity.data) }}</p>
+          <div class="version-trail"><span>版本 {{ entity.version }}</span><span>最近审计证据</span></div>
+          <button v-if="canWrite && activeEditor !== entity.seed_code" class="edit-button" type="button" :aria-label="`编辑企业主体 ${entity.seed_code}`" @click="activeEditor = entity.seed_code">编辑企业主体</button>
+          <ProfileEditor v-if="canWrite && activeEditor === entity.seed_code" target="entity" :profile="entity" @updated="replaceEntity" @reload="reloadProfile" />
+          <ProfileAuditList :audits="entity.recent_audits" />
         </article>
       </section>
     </template>
@@ -187,7 +214,9 @@ dd { margin: 0; color: #233f60; line-height: 1.6; }
 .entity-fields div { min-width: 0; }
 .entity-fields dd { overflow-wrap: anywhere; }
 .candidate-note { margin: 1.25rem 0 0; padding: 0.7rem 0.85rem; color: #874a08; background: #fff8e9; border-left: 3px solid #d4a449; font-size: 0.9rem; line-height: 1.5; }
+.version-trail{display:flex;gap:.55rem;align-items:center;margin-top:1.2rem;color:#526a86;font-size:.78rem;font-weight:700}.version-trail span+span{padding-left:.55rem;border-left:2px solid #d4a449}.edit-button{min-height:2.35rem;margin-top:.75rem;padding:.42rem .8rem;color:#1e568c;border:1px solid #9db5cd;background:#fff;font:inherit;font-weight:700;cursor:pointer}.edit-button:focus-visible{outline:3px solid #e3b260;outline-offset:2px}
 .status-message { padding: 1rem; color: #526a86; background: #fff; border: 1px solid #d6e1ec; }
 .status-message--error { color: #9b1c1c; background: #fff1f0; border-color: #f1b8b5; }
-@media (max-width: 720px) { .section-heading { align-items: flex-start; flex-direction: column; } .field-grid { grid-template-columns: 1fr; gap: 0.3rem; } .field-grid dd { margin-bottom: 0.75rem; } .entity-fields { grid-template-columns: 1fr; gap: 0.75rem; } }
+@media (max-width: 720px) { .section-heading { align-items: flex-start; flex-direction: column; } .field-grid { grid-template-columns: 1fr; gap: 0.3rem; } .field-grid dd { margin-bottom: 0.75rem; } .entity-fields { grid-template-columns: 1fr; gap: 0.75rem; } .version-trail{align-items:flex-start;flex-direction:column;gap:.15rem}.version-trail span+span{padding-left:0;border-left:0}.edit-button,.profile-editor{display:none} }
+@media (prefers-reduced-motion: reduce){*{transition:none!important}}
 </style>
