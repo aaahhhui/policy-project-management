@@ -88,6 +88,35 @@ describe("ProfileEditor", () => {
     expect(updateSharedProfile).not.toHaveBeenCalled();
   });
 
+  it("keeps blank or whitespace-only verification status local without emitting a save", async () => {
+    const wrapper = mount(ProfileEditor, { props: { target: "shared", profile: shared } });
+    await wrapper.get("input[aria-label='核验状态']").setValue("   ");
+    await wrapper.get("form").trigger("submit");
+    expect(wrapper.get("[role=alert]").text()).toContain("核验状态不能为空");
+    expect(updateSharedProfile).not.toHaveBeenCalled();
+    expect(wrapper.emitted("updated")).toBeUndefined();
+  });
+
+  it("keeps valid JSON with a null or array top level local without emitting a save", async () => {
+    for (const value of ["null", "[]"]) {
+      const wrapper = mount(ProfileEditor, { props: { target: "shared", profile: shared } });
+      await wrapper.get("textarea[aria-label='档案结构化数据']").setValue(value);
+      await wrapper.get("form").trigger("submit");
+      expect(wrapper.get("[role=alert]").text()).toContain("必须是 JSON 对象");
+      expect(wrapper.emitted("updated")).toBeUndefined();
+    }
+    expect(updateSharedProfile).not.toHaveBeenCalled();
+  });
+
+  it("keeps a whitespace-only top-level data key local without emitting a save", async () => {
+    const wrapper = mount(ProfileEditor, { props: { target: "shared", profile: shared } });
+    await wrapper.get("textarea[aria-label='档案结构化数据']").setValue('{"   ":"value"}');
+    await wrapper.get("form").trigger("submit");
+    expect(wrapper.get("[role=alert]").text()).toContain("档案结构化数据");
+    expect(updateSharedProfile).not.toHaveBeenCalled();
+    expect(wrapper.emitted("updated")).toBeUndefined();
+  });
+
   it("accepts the backend-supported data shape and rejects deeper or malformed data locally", async () => {
     vi.mocked(updateSharedProfile).mockResolvedValue({ ...shared, data: { label: "text", amount: 1, enabled: true, nullable: null, tags: ["a", 2, false, null], address: { city: "深圳", postal: 518000 } }, version: 2 });
     const wrapper = mount(ProfileEditor, { props: { target: "shared", profile: shared } });
