@@ -46,7 +46,10 @@ export interface SourceCreateInput {
   topic_labels: string[];
 }
 
-export async function getSources(page: number, pageSize: number): Promise<SourcePage> {
+export async function getSources(
+  page = 1,
+  pageSize: 10 | 20 | 50 = 20,
+): Promise<SourcePage> {
   return (await http.get<SourcePage>("/sources", { params: { page, page_size: pageSize } })).data;
 }
 

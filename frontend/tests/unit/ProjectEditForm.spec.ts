@@ -84,7 +84,7 @@ describe("ProjectEditForm", () => {
   });
 
   it("offers a reload action instead of resubmitting stale values after a version conflict", async () => {
-    vi.mocked(updateProject).mockRejectedValue({ response: { data: { detail: { code: "project_version_conflict" } } } });
+    vi.mocked(updateProject).mockRejectedValue({ response: { status: 409, data: { detail: { code: "project_version_conflict", current_version: 4 } } } });
     const wrapper = mount(ProjectEditForm, { props: { project } });
     await wrapper.get("form").trigger("submit");
     expect(wrapper.text()).toContain("重新加载");

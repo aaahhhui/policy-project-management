@@ -16,7 +16,7 @@ export interface ProfileAuditSummary {
   occurred_at: string;
 }
 
-export interface ProfileResponse {
+export interface VersionedProfileResponse {
   code: string;
   display_name: string;
   data: Record<string, unknown>;
@@ -25,7 +25,7 @@ export interface ProfileResponse {
   recent_audits: ProfileAuditSummary[];
 }
 
-export interface BusinessEntityResponse {
+export interface VersionedBusinessEntityResponse {
   seed_code: string;
   legal_name: string;
   data: Record<string, unknown>;
@@ -33,6 +33,9 @@ export interface BusinessEntityResponse {
   version: number;
   recent_audits: ProfileAuditSummary[];
 }
+
+export type ProfileResponse = VersionedProfileResponse;
+export type BusinessEntityResponse = VersionedBusinessEntityResponse;
 
 export interface ProfilePatchInput {
   expected_version: number;
@@ -48,21 +51,28 @@ export interface BusinessEntityPatchInput {
   verification_status?: string;
 }
 
-export async function getSharedProfile(): Promise<ProfileResponse> {
-  return (await http.get<ProfileResponse>("/profiles/shared")).data;
+export async function getSharedProfile(): Promise<VersionedProfileResponse> {
+  return (await http.get<VersionedProfileResponse>("/profiles/shared")).data;
 }
 
-export async function getBusinessEntities(): Promise<BusinessEntityResponse[]> {
-  return (await http.get<BusinessEntityResponse[]>("/profiles/entities")).data;
+export async function getBusinessEntities(): Promise<VersionedBusinessEntityResponse[]> {
+  return (await http.get<VersionedBusinessEntityResponse[]>("/profiles/entities")).data;
 }
 
-export async function updateSharedProfile(payload: ProfilePatchInput): Promise<ProfileResponse> {
-  return (await http.patch<ProfileResponse>("/profiles/shared", payload)).data;
+export async function updateSharedProfile(
+  payload: ProfilePatchInput,
+): Promise<VersionedProfileResponse> {
+  return (await http.patch<VersionedProfileResponse>("/profiles/shared", payload)).data;
 }
 
 export async function updateBusinessEntity(
   seedCode: string,
   payload: BusinessEntityPatchInput,
-): Promise<BusinessEntityResponse> {
-  return (await http.patch<BusinessEntityResponse>(`/profiles/entities/${seedCode}`, payload)).data;
+): Promise<VersionedBusinessEntityResponse> {
+  return (
+    await http.patch<VersionedBusinessEntityResponse>(
+      `/profiles/entities/${seedCode}`,
+      payload,
+    )
+  ).data;
 }

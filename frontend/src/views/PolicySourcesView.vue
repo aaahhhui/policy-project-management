@@ -29,7 +29,7 @@ const hasNextPage = computed(() => page.value * pageSize < total.value);
 function updateMobile(event: MediaQueryListEvent) { mobile.value = event.matches; }
 function replaceSource(source: PolicySource) { sources.value = sources.value.map((item) => item.id === source.id ? source : item); }
 function conflictMessage(error: unknown) {
-  return responseStatus(error) === 409 || getBusinessErrorCode(error)?.code === "source_version_conflict"
+  return getBusinessErrorCode(error)?.code === "source_version_conflict"
     ? "来源已被更新，请重新加载后再操作。"
     : "操作未完成，请稍后重试。";
 }

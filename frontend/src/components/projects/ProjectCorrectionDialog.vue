@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 
-import { businessErrorMessage } from "../../api/errors";
+import { businessErrorMessage, getBusinessErrorCode } from "../../api/errors";
 import { getPrimaryEntityHistory, type PrimaryEntityDecision } from "../../api/evaluations";
 import { correctProjectPrimaryEntity, correctProjectStatus, type ProjectCorrectionInput, type ProjectDetail, type ProjectStatus } from "../../api/projects";
 
@@ -29,7 +29,7 @@ const hasPrimaryPermission = computed(() => props.project.capabilities.can_corre
 const needsResult = computed(() => resultStatuses.includes(targetStatus.value));
 
 function needsClearConfirmation(): boolean { return (targetStatus.value === "submitted" && Boolean(props.project.result_on || props.project.result_note)) || (props.project.status === "terminated" && Boolean(props.project.termination_note)); }
-function isVersionConflict(caught: unknown): boolean { return (caught as { response?: { data?: { detail?: { code?: string } } } })?.response?.data?.detail?.code === "project_version_conflict"; }
+function isVersionConflict(caught: unknown): boolean { return getBusinessErrorCode(caught)?.code === "project_version_conflict"; }
 async function loadPrimaryCandidate(): Promise<void> {
   if (props.mode !== "primary-entity" || !hasPrimaryPermission.value) return;
   candidateLoading.value = true; error.value = ""; candidate.value = null;

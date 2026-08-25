@@ -82,7 +82,7 @@ describe("EvaluationRuleDetailView", () => {
     });
     vi.stubGlobal("confirm", vi.fn(() => true));
     vi.mocked(publishRuleVersion).mockRejectedValue({
-      response: { data: { detail: { code: "rule_weight_total_invalid" } } },
+      response: { status: 422, data: { detail: { code: "rule_weight_total_invalid" } } },
     });
 
     const wrapper = mount(EvaluationRuleDetailView, {

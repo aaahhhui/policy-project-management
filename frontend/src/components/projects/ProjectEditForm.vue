@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 
-import { businessErrorMessage } from "../../api/errors";
+import { businessErrorMessage, getBusinessErrorCode } from "../../api/errors";
 import { getProjectUserOptions, updateProject, type ProjectDetail, type ProjectUpdateInput, type ProjectUserOption } from "../../api/projects";
 
 const props = defineProps<{ project: ProjectDetail }>();
@@ -23,8 +23,7 @@ function normalize(value: string): string | null { return value.trim() || null; 
 function memberIds(): number[] { return [...new Set(form.member_user_ids.map(Number).filter((value) => Number.isInteger(value) && value > 0))]; }
 function userLabel(user: ProjectUserOption): string { return user.role ? `${user.display_name}（${user.role}）` : user.display_name; }
 function isVersionConflict(caught: unknown): boolean {
-  const detail = (caught as { response?: { data?: { detail?: { code?: string } } } })?.response?.data?.detail;
-  return detail?.code === "project_version_conflict";
+  return getBusinessErrorCode(caught)?.code === "project_version_conflict";
 }
 async function submit(): Promise<void> {
   if (saving.value) return;

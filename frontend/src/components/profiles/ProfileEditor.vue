@@ -16,16 +16,30 @@ function validName(): string | null { const normalized = name.value.trim(); if (
 function validStatus(): string | null { const normalized = status.value.trim(); if (!normalized) { error.value = "核验状态不能为空。"; return null; } if (normalized.length > 64) { error.value = "核验状态不能超过 64 个字符。"; return null; } if (!/^[a-z0-9_]+$/.test(normalized)) { error.value = "核验状态必须匹配 [a-z0-9_]+。"; return null; } return normalized; }
 function isScalar(value: unknown): value is string | number | boolean | null { return value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean"; }
 function validDataShape(data: Record<string, unknown>): boolean {
-  return Object.entries(data).every(([key, value]) => key.trim().length > 0 && key.length <= 64 && (
-    isScalar(value) || (Array.isArray(value) && value.every(isScalar)) || (!Array.isArray(value) && typeof value === "object" && value !== null && Object.values(value).every(isScalar))
-  ));
+  let nodes = 0;
+  function visit(value: unknown, depth: number): boolean {
+    nodes += 1;
+    if (nodes > 64) return false;
+    if (isScalar(value)) return true;
+    if (depth >= 4) return false;
+    if (Array.isArray(value)) {
+      return value.length <= 32 && value.every((item) => visit(item, depth + 1));
+    }
+    if (!value || typeof value !== "object") return false;
+    return Object.entries(value as Record<string, unknown>).every(
+      ([key, item]) => key.trim().length > 0
+        && Array.from(key).length <= 64
+        && visit(item, depth + 1),
+    );
+  }
+  return visit(data, 0);
 }
 function parseData(): Record<string, unknown> | null {
   try {
     const parsed: unknown = JSON.parse(dataText.value);
     if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") { error.value = "档案结构化数据必须是 JSON 对象。"; return null; }
     const data = parsed as Record<string, unknown>;
-    if (!validDataShape(data)) { error.value = "档案结构化数据仅支持标量、标量列表或一层标量对象。"; return null; }
+    if (!validDataShape(data)) { error.value = "档案结构化数据必须是受限递归 JSON（深度 4、节点 64、列表 32 项，键名不超过 64 个字符）。"; return null; }
     if (new TextEncoder().encode(stableJson(data)).byteLength > 32 * 1024) { error.value = "档案结构化数据不能超过 32 KiB。"; return null; }
     return data;
   } catch { error.value = "档案结构化数据不是有效的 JSON 格式。"; return null; }
@@ -38,7 +52,7 @@ async function submit(): Promise<void> {
   try {
     if (props.target === "shared") { const profile = props.profile; const payload: ProfilePatchInput = { expected_version: profile.version }; if (normalizedName !== profile.display_name) payload.display_name = normalizedName; if (stableJson(data) !== stableJson(profile.data)) payload.data = data; if (normalizedStatus !== profile.verification_status) payload.verification_status = normalizedStatus; if (Object.keys(payload).length === 1) { error.value = "没有可保存的变更。"; return; } emit("updated", await updateSharedProfile(payload)); }
     else { const profile = props.profile; const payload: BusinessEntityPatchInput = { expected_version: profile.version }; if (normalizedName !== profile.legal_name) payload.legal_name = normalizedName; if (stableJson(data) !== stableJson(profile.data)) payload.data = data; if (normalizedStatus !== profile.verification_status) payload.verification_status = normalizedStatus; if (Object.keys(payload).length === 1) { error.value = "没有可保存的变更。"; return; } emit("updated", await updateBusinessEntity(profile.seed_code, payload)); }
-  } catch (caught) { conflict.value = getBusinessErrorCode(caught)?.code === "profile_version_conflict"; error.value = conflict.value ? `资料已被他人更新（当前版本 ${getBusinessErrorCode(caught)?.currentVersion ?? "未知"}）。重新加载后再编辑。` : "档案未能保存，请稍后重试。"; }
+  } catch (caught) { const businessError = getBusinessErrorCode(caught); conflict.value = businessError?.code === "profile_version_conflict"; error.value = conflict.value ? `资料已被他人更新（当前版本 ${businessError?.currentVersion ?? "未知"}）。重新加载后再编辑。` : "档案未能保存，请稍后重试。"; }
   finally { saving.value = false; }
 }
 watch(() => props.profile, syncForm, { immediate: true, deep: true });

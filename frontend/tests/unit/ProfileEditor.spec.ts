@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { mount } from "@vue/test-utils";
 import { nextTick } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +25,12 @@ const entity: BusinessEntityResponse = {
   seed_code: "ENTITY-SHENZHEN", legal_name: "深圳适创腾扬科技有限公司", data: { city: "深圳" }, verification_status: "pending_business_license_review", version: 3,
   recent_audits: [{ ...audit, id: 19, action: "business_entity_updated", object_type: "business_entity", object_id: 3, changed_fields: ["legal_name"] }],
 };
+const canonicalSeed = JSON.parse(
+  readFileSync(
+    resolve(process.cwd(), "../data/seed/enterprise-profile.initial.json"),
+    "utf8",
+  ),
+) as { business_entities: Array<Record<string, unknown>> };
 
 describe("ProfileEditor", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -48,6 +57,35 @@ describe("ProfileEditor", () => {
 
     expect(updateBusinessEntity).toHaveBeenCalledWith("ENTITY-SHENZHEN", { expected_version: 3, legal_name: "深圳适创科技有限公司", data: { city: "深圳", sectors: ["工业软件"] }, verification_status: "pending_review" });
     expect(wrapper.emitted("updated")?.[0]).toEqual([{ ...entity, legal_name: "深圳适创科技有限公司", data: { city: "深圳", sectors: ["工业软件"] }, verification_status: "pending_review", version: 4 }]);
+  });
+
+  it("submits a legal-name-only edit with the actual canonical recursive seed data", async () => {
+    const seedData = canonicalSeed.business_entities[0];
+    const canonicalEntity: BusinessEntityResponse = {
+      ...entity,
+      seed_code: String(seedData.seed_code),
+      legal_name: String(seedData.legal_name),
+      data: seedData,
+      verification_status: String(seedData.entity_type_verification_status),
+      version: 1,
+    };
+    vi.mocked(updateBusinessEntity).mockResolvedValue({
+      ...canonicalEntity,
+      legal_name: "北京适创科技有限公司（已复核）",
+      version: 2,
+    });
+    const wrapper = mount(ProfileEditor, {
+      props: { target: "entity", profile: canonicalEntity },
+    });
+
+    await wrapper.get("input[aria-label='企业主体名称']").setValue("北京适创科技有限公司（已复核）");
+    await wrapper.get("form").trigger("submit");
+
+    expect(updateBusinessEntity).toHaveBeenCalledWith("ENTITY-BEIJING", {
+      expected_version: 1,
+      legal_name: "北京适创科技有限公司（已复核）",
+    });
+    expect(wrapper.find("[role=alert]").exists()).toBe(false);
   });
 
   it("normalizes the 255-character name and 64-character status before comparing and sending", async () => {
@@ -117,19 +155,49 @@ describe("ProfileEditor", () => {
     expect(wrapper.emitted("updated")).toBeUndefined();
   });
 
-  it("accepts the backend-supported data shape and rejects deeper or malformed data locally", async () => {
-    vi.mocked(updateSharedProfile).mockResolvedValue({ ...shared, data: { label: "text", amount: 1, enabled: true, nullable: null, tags: ["a", 2, false, null], address: { city: "深圳", postal: 518000 } }, version: 2 });
+  it("accepts bounded recursive JSON and rejects the backend depth, node, list, and key limits", async () => {
+    const validData = {
+      label: "text",
+      records: [{ name: "record", source_refs: ["S05", "S06"] }],
+      nested: { one: { two: { value: 1 } } },
+    };
+    vi.mocked(updateSharedProfile).mockResolvedValue({ ...shared, data: validData, version: 2 });
     const wrapper = mount(ProfileEditor, { props: { target: "shared", profile: shared } });
-    await wrapper.get("textarea[aria-label='档案结构化数据']").setValue('{"label":"text","amount":1,"enabled":true,"nullable":null,"tags":["a",2,false,null],"address":{"city":"深圳","postal":518000}}');
+    await wrapper.get("textarea[aria-label='档案结构化数据']").setValue(JSON.stringify(validData));
     await wrapper.get("form").trigger("submit");
     expect(updateSharedProfile).toHaveBeenCalledTimes(1);
 
-    for (const invalid of ['{"nested":{"too_deep":{"value":1}}}', '{"nested":[[1]]}', '{"":1}', `{"${"k".repeat(65)}":1}`]) {
+    const tooManyNodes = Object.fromEntries(
+      Array.from({ length: 32 }, (_, index) => [`field_${index}`, [index]]),
+    );
+    for (const invalid of [
+      { a: { b: { c: { d: { value: 1 } } } } },
+      { values: Array.from({ length: 33 }, (_, index) => index) },
+      tooManyNodes,
+      { "": 1 },
+      { ["k".repeat(65)]: 1 },
+    ]) {
       const invalidWrapper = mount(ProfileEditor, { props: { target: "shared", profile: shared } });
-      await invalidWrapper.get("textarea[aria-label='档案结构化数据']").setValue(invalid);
+      await invalidWrapper.get("textarea[aria-label='档案结构化数据']").setValue(JSON.stringify(invalid));
       await invalidWrapper.get("form").trigger("submit");
       expect(invalidWrapper.get("[role=alert]").text()).toContain("档案结构化数据");
     }
+    expect(updateSharedProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it("counts profile data keys as Unicode code points like the backend", async () => {
+    const accepted = { ["😀".repeat(64)]: 1 };
+    vi.mocked(updateSharedProfile).mockResolvedValue({ ...shared, data: accepted, version: 2 });
+    const wrapper = mount(ProfileEditor, { props: { target: "shared", profile: shared } });
+    await wrapper.get("textarea[aria-label='档案结构化数据']").setValue(JSON.stringify(accepted));
+    await wrapper.get("form").trigger("submit");
+    expect(updateSharedProfile).toHaveBeenCalledWith({ expected_version: 1, data: accepted });
+
+    const rejected = { ["😀".repeat(65)]: 1 };
+    const rejectedWrapper = mount(ProfileEditor, { props: { target: "shared", profile: shared } });
+    await rejectedWrapper.get("textarea[aria-label='档案结构化数据']").setValue(JSON.stringify(rejected));
+    await rejectedWrapper.get("form").trigger("submit");
+    expect(rejectedWrapper.get("[role=alert]").text()).toContain("档案结构化数据");
     expect(updateSharedProfile).toHaveBeenCalledTimes(1);
   });
 

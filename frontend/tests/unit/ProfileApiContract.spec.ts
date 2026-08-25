@@ -9,6 +9,9 @@ vi.mock("../../src/api/http", () => ({ default: http }));
 import {
   updateBusinessEntity,
   updateSharedProfile,
+  type BusinessEntityResponse,
+  type VersionedBusinessEntityResponse,
+  type VersionedProfileResponse,
   type ProfileResponse,
   type ProfilePatchInput,
 } from "../../src/api/profiles";
@@ -18,6 +21,10 @@ type ForbiddenProfileKey = "adapter_key" | "selector" | "channels" | "raw_body" 
 type AssertNever<Value extends never> = Value;
 type ProfileInputHasNoForbiddenKeys = AssertNever<Extract<keyof ProfilePatchInput, ForbiddenProfileKey>>;
 type ProfileResponseHasNoForbiddenKeys = AssertNever<Extract<keyof ProfileResponse, ForbiddenProfileKey>>;
+const versionedProfile: VersionedProfileResponse = {} as ProfileResponse;
+const versionedEntity: VersionedBusinessEntityResponse = {} as BusinessEntityResponse;
+void versionedProfile;
+void versionedEntity;
 
 describe("profile API contract", () => {
   beforeEach(() => {
@@ -47,9 +54,18 @@ describe("profile API contract", () => {
 
     expect(http.patch).toHaveBeenNthCalledWith(1, "/profiles/shared", shared);
     expect(http.patch).toHaveBeenNthCalledWith(2, "/profiles/entities/ENTITY-SHENZHEN", entity);
-    expect(getBusinessErrorCode({ response: { data: { detail: {
+    expect(getBusinessErrorCode({ response: { status: 409, data: { detail: {
       code: "profile_version_conflict", current_version: 4,
     } } } })).toEqual({ code: "profile_version_conflict", currentVersion: 4 });
-    expect(getBusinessErrorCode({ response: { data: { detail: "raw server error" } } })).toBeNull();
+    expect(getBusinessErrorCode({ response: { status: 422, data: { detail: {
+      code: "profile_no_changes",
+    } } } })).toEqual({ code: "profile_no_changes" });
+    expect(getBusinessErrorCode({ response: { status: 409, data: { detail: {
+      code: "profile_no_changes",
+    } } } })).toBeNull();
+    expect(getBusinessErrorCode({ response: { status: 422, data: { detail: {
+      code: "arbitrary_profile_error",
+    } } } })).toBeNull();
+    expect(getBusinessErrorCode({ response: { status: 422, data: { detail: "raw server error" } } })).toBeNull();
   });
 });
