@@ -17,7 +17,7 @@ Scope: local verification only; no production deployment, production migration, 
 | Frontend typing | PASS | Vue TypeScript build check; exit `0`. |
 | Frontend production build | PASS WITH WARNINGS | `1770` modules transformed; exit `0`. Existing third-party PURE-comment and large-chunk warnings remain. |
 | SQLite Stage 6 schema suite | PASS | `17 passed`; exit `0`. |
-| MySQL 8.4 fresh and round-trip | PASS | Fresh chain reached `0009`; downgrade reached `0008`; upgrade returned to `0009`; one fictional profile row remained present and returned with version `1`. |
+| MySQL 8.4 legacy-data round-trip | PASS | Fresh chain stopped at `0008`; fictional source/channel/task rows (safe IDs `960001`) were inserted, then preserved through `0009 -> 0008 -> 0009`. Both label columns were non-null JSON arrays with length `0` after each upgrade. |
 | Docker Compose commands | DEFERRED | Compose explicitly loads a local `.env` and requires database/JWT test secrets. Per the safety gate, the file was not read and Compose was not started. Full tests instead ran in an isolated repository image without application secrets. |
 
 ## Public no-login URL probes
@@ -52,6 +52,8 @@ The rejection input contained a controlled unsafe query marker. The marker was a
 
 Native Python Playwright ran headless against the real local Vue application after reconnaissance and `networkidle`. API responses were controlled non-secret fixtures because the full Compose login environment was unavailable. Screenshots and the script remain ignored temporary evidence.
 
+After owner shared/entity updates, a second real reader-authenticated API read returned both non-empty audit summaries. The summaries exposed the expected actions, changed fields, safe before/after values, and only `[redacted]` for the two secret-like test fields; neither raw marker appeared in either reader response. A temporary GET-only audit-filter mutation produced the expected RED at the reader `recent_audits` assertion and was removed before GREEN.
+
 | View | Result | Evidence |
 | --- | --- | --- |
 | Desktop owner | PASS (frontend fixture fallback) | Source states, safe preview, add/enable/retry/disable controls, profile/entity edit controls, version `2`, safe audit, redacted value, and stale `409` reload guidance were visible. |
@@ -64,7 +66,7 @@ Native Python Playwright ran headless against the real local Vue application aft
 - Tracked-diff scans found no private-key header, bearer value, provider-key shape, WeCom webhook value, or host filesystem path. The only URL query in the added test is the controlled redaction marker used to prove removal.
 - No changed public source/profile schema or TypeScript contract added adapter, selector, raw body, header, credential, or filesystem-path fields.
 - Python advisory audit reported findings only in image tooling/dev packages: `pip 25.0.1` and `pytest 8.4.2`; application runtime libraries had no reported finding in this run. The local project package itself is not published and was not auditable by the registry.
-- Node production audit reported one high and one moderate advisory through the transitive build dependency `nanoid`; remediation is deferred to a separately reviewed dependency update.
+- Node production audit exited `1` with two distinct transitive findings: high `nanoid` (`GHSA-2v37-7h3g-55p8`, `<3.3.18`) through `element-plus -> ... -> vue -> @vue/compiler-sfc -> postcss -> nanoid`, and moderate `postcss` (`GHSA-fxqj-rqcc-2cmp`, `<=8.5.22`) through `element-plus -> ... -> vue -> @vue/compiler-sfc -> postcss`. Remediation is deferred to a separately reviewed dependency update.
 
 ## Independent gates and exclusions
 
