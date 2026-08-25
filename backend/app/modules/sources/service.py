@@ -158,8 +158,10 @@ class SourceService:
         self.db.refresh(source, attribute_names=["channels"])
         return source
 
-    def assert_collectable(self, source_id: int) -> PolicySource:
-        source = self._get(source_id)
+    def assert_collectable(
+        self, source_id: int, *, lock: bool = False
+    ) -> PolicySource:
+        source = self._get(source_id, lock=lock)
         if source.recognition_status != "enabled" or not source.is_enabled:
             raise SourceNotCollectable("source is not owner-enabled")
         if source.adapter_key not in _RELEASED_COLLECTOR_KEYS:
@@ -175,7 +177,9 @@ class SourceService:
             .where(PolicySource.id == source_id)
         )
         if lock:
-            statement = statement.with_for_update()
+            statement = statement.with_for_update().execution_options(
+                populate_existing=True
+            )
         source = self.db.scalar(statement)
         if source is None:
             raise SourceNotFound(f"source {source_id} was not found")

@@ -35,6 +35,10 @@ class ProfileFieldValidationError(ValueError):
     pass
 
 
+class ProfileNoChanges(Exception):
+    pass
+
+
 def _trim_required(value: str, field_name: str) -> str:
     normalized = value.strip()
     if not normalized:

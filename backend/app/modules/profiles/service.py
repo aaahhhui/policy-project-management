@@ -12,6 +12,7 @@ from app.modules.profiles.models import BusinessEntity, EnterpriseProfile
 from app.modules.profiles.schemas import (
     BusinessEntityPatchInput,
     ProfileAuditSummary,
+    ProfileNoChanges,
     ProfileNotFound,
     ProfilePatchInput,
     ProfileVersionConflict,
@@ -68,6 +69,8 @@ class ProfileService:
             raise ProfileNotFound()
         self._assert_expected_version(profile.version, payload.expected_version)
         before, after, changed_fields = self._apply_patch(profile, payload, "display_name")
+        if not changed_fields:
+            raise ProfileNoChanges()
         profile.version += 1
         AuditService(self.db).record(
             action="enterprise_profile_updated",
@@ -92,6 +95,8 @@ class ProfileService:
             raise ProfileNotFound()
         self._assert_expected_version(entity.version, payload.expected_version)
         before, after, changed_fields = self._apply_patch(entity, payload, "legal_name")
+        if not changed_fields:
+            raise ProfileNoChanges()
         entity.version += 1
         AuditService(self.db).record(
             action="business_entity_updated",

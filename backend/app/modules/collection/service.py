@@ -25,10 +25,7 @@ class CollectionTaskService:
     def create(
         self, source_id: int, trigger_type: str, requested_by: int | None
     ) -> CollectionTask:
-        SourceService(self.db, None).assert_collectable(source_id)
-        self.db.scalar(
-            select(PolicySource.id).where(PolicySource.id == source_id).with_for_update()
-        )
+        SourceService(self.db, None).assert_collectable(source_id, lock=True)
         active_id = self.db.scalar(
             select(CollectionTask.id).where(
                 CollectionTask.source_id == source_id,

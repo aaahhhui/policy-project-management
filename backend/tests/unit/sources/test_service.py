@@ -1,7 +1,9 @@
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import select
 
+from app.modules.audit.models import AuditEvent
 from app.modules.collection.models import CollectionTask
 from app.modules.collection.service import CollectionTaskService
 from app.modules.sources.recognition import RecognitionResult
@@ -230,6 +232,59 @@ def test_gdii_seed_is_server_owned_idempotent_and_waits_for_owner_confirmation(d
         ("notices", "https://gdii.gd.gov.cn/zwgk/tzgg1011/index.html"),
         ("funds", "https://gdii.gd.gov.cn/xmzj1033/index.html"),
     ]
+
+
+def test_changed_source_seed_rerun_preserves_owner_config_version_and_channels(
+    db, seeded_owner, caplog
+):
+    source = seed_gdii_source(db, seeded_owner)
+    source.entry_url = "https://owner.example/source"
+    source.collector_target_url = "https://owner.example/collector"
+    source.adapter_key = "rss_atom"
+    source.adapter_status = "pending"
+    source.recognition_status = "disabled"
+    source.recognition_kind = "rss_atom"
+    source.recognition_summary = "owner-source-summary-marker"
+    source.version = 11
+    source.channels[0].name = "Owner channel name"
+    source.channels[0].list_url = "https://owner.example/channel"
+    source.channels[0].is_enabled = False
+    db.commit()
+    expected_channels = [
+        (channel.id, channel.code, channel.name, channel.list_url, channel.is_enabled)
+        for channel in source.channels
+    ]
+
+    repeated = seed_gdii_source(db, seeded_owner)
+
+    db.refresh(source)
+    assert repeated.id == source.id
+    assert (
+        source.entry_url,
+        source.collector_target_url,
+        source.adapter_key,
+        source.adapter_status,
+        source.recognition_status,
+        source.recognition_kind,
+        source.recognition_summary,
+        source.version,
+    ) == (
+        "https://owner.example/source",
+        "https://owner.example/collector",
+        "rss_atom",
+        "pending",
+        "disabled",
+        "rss_atom",
+        "owner-source-summary-marker",
+        11,
+    )
+    assert [
+        (channel.id, channel.code, channel.name, channel.list_url, channel.is_enabled)
+        for channel in source.channels
+    ] == expected_channels
+    assert db.scalar(select(AuditEvent)) is None
+    assert "source_seed_existing_row_mismatch_skipped" in caplog.text
+    assert "owner-source-summary-marker" not in caplog.text
 
 
 @pytest.mark.parametrize(

@@ -135,6 +135,32 @@ def test_only_owner_can_write_versioned_profiles_with_safe_errors(
     assert len(list(db.scalars(select(BusinessEntity)))) == 3
 
 
+def test_profile_route_rejects_semantic_noop_with_stable_code_and_no_side_effects(
+    client, db, seeded_owner, seeded_owner_password
+):
+    _seed_profiles(db)
+    _login(client, seeded_owner_password)
+    before = client.get("/api/profiles/shared")
+    assert before.status_code == 200
+
+    response = client.patch(
+        "/api/profiles/shared",
+        json={
+            "expected_version": before.json()["version"],
+            "display_name": f"  {before.json()['display_name']}  ",
+            "verification_status": before.json()["verification_status"],
+            "data": before.json()["data"],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == {"code": "profile_no_changes"}
+    after = client.get("/api/profiles/shared")
+    assert after.status_code == 200
+    assert after.json() == before.json()
+    assert db.scalar(select(AuditEvent)) is None
+
+
 def test_reader_cannot_write_profiles(client, db, seeded_owner, seeded_owner_password):
     _seed_profiles(db)
     reader_role = Role(code="reader", name="Reader")

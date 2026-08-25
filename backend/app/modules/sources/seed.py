@@ -1,4 +1,5 @@
 import sys
+import logging
 from datetime import UTC, datetime
 from typing import TypedDict
 
@@ -8,6 +9,8 @@ from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.modules.auth.models import Role, User
 from app.modules.sources.models import PolicySource, SourceChannel
+
+logger = logging.getLogger(__name__)
 
 class _SeedChannel(TypedDict):
     code: str
@@ -43,18 +46,6 @@ def _server_channel(channel: _SeedChannel) -> SourceChannel:
     return SourceChannel(**channel, is_enabled=True)
 
 
-def _sync_server_channels(source: PolicySource) -> None:
-    existing = {channel.code: channel for channel in source.channels}
-    for channel in GDII_SOURCE["channels"]:
-        current = existing.get(channel["code"])
-        if current is None:
-            source.channels.append(_server_channel(channel))
-            continue
-        current.name = channel["name"]
-        current.list_url = channel["list_url"]
-        current.is_enabled = True
-
-
 def _new_seed_source(actor: User) -> PolicySource:
     source = PolicySource(
         name=GDII_SOURCE["name"],
@@ -80,21 +71,24 @@ def seed_gdii_source(db: Session, actor: User) -> PolicySource:
         if source is None:
             source = _new_seed_source(actor)
             db.add(source)
-        else:
-            source.entry_url = GDII_SOURCE["entry_url"]
-            source.adapter_key = "gdii"
-            source.adapter_status = "ready"
-            source.updated_by = actor.id
-            _sync_server_channels(source)
-            if source.recognition_status not in {"enabled", "disabled"}:
-                source.recognition_status = "ready_to_enable"
-                source.recognition_kind = "supported_government_site"
-                source.recognition_summary = "广东省工业和信息化厅 · 公开政策列表"
-                source.previewed_at = datetime.now(UTC)
-                source.is_enabled = False
-                source.owner_confirmed_at = None
-                source.enabled_at = None
-                source.disabled_at = None
+        elif (
+            source.entry_url != GDII_SOURCE["entry_url"]
+            or source.collector_target_url != GDII_SOURCE["entry_url"]
+            or source.adapter_key != "gdii"
+            or source.adapter_status != "ready"
+            or source.recognition_status != "ready_to_enable"
+            or source.recognition_kind != "supported_government_site"
+            or source.is_enabled
+            or [
+                (channel.code, channel.name, channel.list_url, channel.is_enabled)
+                for channel in source.channels
+            ]
+            != [
+                (channel["code"], channel["name"], channel["list_url"], True)
+                for channel in GDII_SOURCE["channels"]
+            ]
+        ):
+            logger.warning("source_seed_existing_row_mismatch_skipped")
         db.commit()
     except Exception:
         db.rollback()

@@ -1,4 +1,5 @@
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from app.modules.profiles.models import BusinessEntity, EnterpriseProfile
 
 SHARED_PROFILE_CODE = "COMPANY-SHARED"
 ENTITY_SEED_CODES = ("ENTITY-BEIJING", "ENTITY-SUZHOU", "ENTITY-SHENZHEN")
+logger = logging.getLogger(__name__)
 
 
 def import_enterprise_seed(db: Session, path: str | Path) -> None:
@@ -71,36 +73,45 @@ def _upsert_shared_profile(db: Session, source: dict[str, Any]) -> None:
     profile = db.scalar(
         select(EnterpriseProfile).where(EnterpriseProfile.code == SHARED_PROFILE_CODE)
     )
+    display_name = _require_string(source, "display_name")
+    verification_status = _require_string(source, "verification_status")
     if profile is None:
         profile = EnterpriseProfile(
             code=SHARED_PROFILE_CODE,
-            display_name=_require_string(source, "display_name"),
+            display_name=display_name,
             data=source,
-            verification_status=_require_string(source, "verification_status"),
+            verification_status=verification_status,
         )
         db.add(profile)
         return
-    profile.display_name = _require_string(source, "display_name")
-    profile.data = source
-    profile.verification_status = _require_string(source, "verification_status")
+    if (
+        profile.display_name != display_name
+        or profile.data != source
+        or profile.verification_status != verification_status
+    ):
+        logger.warning("profile_seed_existing_row_mismatch_skipped")
 
 
 def _upsert_business_entity(db: Session, source: dict[str, Any]) -> None:
     seed_code = _require_string(source, "seed_code")
     entity = db.scalar(select(BusinessEntity).where(BusinessEntity.seed_code == seed_code))
     verification_status = _require_string(source, "entity_type_verification_status")
+    legal_name = _require_string(source, "legal_name")
     if entity is None:
         entity = BusinessEntity(
             seed_code=seed_code,
-            legal_name=_require_string(source, "legal_name"),
+            legal_name=legal_name,
             data=source,
             verification_status=verification_status,
         )
         db.add(entity)
         return
-    entity.legal_name = _require_string(source, "legal_name")
-    entity.data = source
-    entity.verification_status = verification_status
+    if (
+        entity.legal_name != legal_name
+        or entity.data != source
+        or entity.verification_status != verification_status
+    ):
+        logger.warning("profile_seed_existing_row_mismatch_skipped")
 
 
 def main() -> None:

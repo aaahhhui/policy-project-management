@@ -12,6 +12,7 @@ from app.modules.auth.models import User
 from app.modules.profiles.schemas import (
     BusinessEntityPatchInput,
     ProfileFieldValidationError,
+    ProfileNoChanges,
     ProfileNotFound,
     ProfilePatchInput,
     ProfileVersionConflict,
@@ -50,6 +51,11 @@ def _profile_error_response(error: Exception) -> HTTPException:
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "profile_version_conflict", "current_version": error.current_version},
         )
+    if isinstance(error, ProfileNoChanges):
+        return HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"code": "profile_no_changes"},
+        )
     return HTTPException(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         detail={"code": "profile_field_validation_failed"},
@@ -79,7 +85,12 @@ def update_shared_profile(
         response = ProfileService(db).update_shared(payload, user)
         db.commit()
         return response
-    except (ProfileNotFound, ProfileVersionConflict, ProfileFieldValidationError) as error:
+    except (
+        ProfileNotFound,
+        ProfileVersionConflict,
+        ProfileFieldValidationError,
+        ProfileNoChanges,
+    ) as error:
         db.rollback()
         raise _profile_error_response(error) from None
 
@@ -95,6 +106,11 @@ def update_business_entity(
         response = ProfileService(db).update_entity(seed_code, payload, user)
         db.commit()
         return response
-    except (ProfileNotFound, ProfileVersionConflict, ProfileFieldValidationError) as error:
+    except (
+        ProfileNotFound,
+        ProfileVersionConflict,
+        ProfileFieldValidationError,
+        ProfileNoChanges,
+    ) as error:
         db.rollback()
         raise _profile_error_response(error) from None

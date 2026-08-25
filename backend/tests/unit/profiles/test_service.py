@@ -14,6 +14,7 @@ from app.modules.policies.models import Policy
 from app.modules.profiles.models import BusinessEntity, EnterpriseProfile
 from app.modules.profiles.schemas import (
     BusinessEntityPatchInput,
+    ProfileNoChanges,
     ProfilePatchInput,
     ProfileVersionConflict,
 )
@@ -90,6 +91,32 @@ def test_shared_update_versions_audits_and_redacts_changed_values(db, seeded_own
         },
     }
     assert updated.data["secret_token"] == "[redacted]"
+
+
+def test_semantic_noop_preserves_profile_version_data_and_audit(db, seeded_owner):
+    _seed_profiles(db)
+    service = ProfileService(db)
+    before = service.get_shared_profile(seeded_owner)
+    profile = db.scalar(select(EnterpriseProfile))
+    assert profile is not None
+    stored_data = dict(profile.data)
+
+    with pytest.raises(ProfileNoChanges):
+        service.update_shared(
+            ProfilePatchInput(
+                expected_version=before.version,
+                display_name=f"  {before.display_name}  ",
+                verification_status=before.verification_status,
+                data=before.data,
+            ),
+            seeded_owner,
+        )
+
+    assert profile.version == before.version
+    assert profile.display_name == before.display_name
+    assert profile.verification_status == before.verification_status
+    assert profile.data == stored_data
+    assert db.scalar(select(func.count()).select_from(AuditEvent)) == 0
 
 
 def test_shared_update_preserves_manual_policy_conclusion_and_creates_no_stage4_notifications(
