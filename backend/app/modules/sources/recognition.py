@@ -36,6 +36,14 @@ class RecognitionResult:
     summary: str
     previewed_at: datetime | None
     adapter_key: str | None
+    collector_target_url: str | None = None
+
+
+@dataclass(frozen=True)
+class _ServerOwnedChannel:
+    code: str
+    name: str
+    list_url: str
 
 
 @dataclass(frozen=True)
@@ -44,6 +52,7 @@ class SupportedRecognizer:
     path: str
     kind: Literal["supported_government_site", "public_listing_page"]
     adapter_key: Literal["gdii"]
+    channel: _ServerOwnedChannel
 
     def matches(self, url: str) -> bool:
         parsed = urlsplit(url)
@@ -56,14 +65,32 @@ _SUPPORTED_LISTINGS = (
         path="/zwgk/tzgg1011/index.html",
         kind="supported_government_site",
         adapter_key="gdii",
+        channel=_ServerOwnedChannel(
+            code="notices",
+            name="通知公告",
+            list_url="https://gdii.gd.gov.cn/zwgk/tzgg1011/index.html",
+        ),
     ),
     SupportedRecognizer(
         host="gdii.gd.gov.cn",
         path="/xmzj1033/index.html",
         kind="public_listing_page",
         adapter_key="gdii",
+        channel=_ServerOwnedChannel(
+            code="funds",
+            name="项目资金",
+            list_url="https://gdii.gd.gov.cn/xmzj1033/index.html",
+        ),
     ),
 )
+
+
+def server_owned_gdii_channel(target_url: str) -> tuple[str, str, str] | None:
+    for listing in _SUPPORTED_LISTINGS:
+        if listing.matches(target_url):
+            channel = listing.channel
+            return channel.code, channel.name, channel.list_url
+    return None
 
 
 class _DocumentMetadataParser(HTMLParser):
@@ -163,6 +190,7 @@ class SourceRecognizer:
             summary=summary,
             previewed_at=datetime.now(UTC),
             adapter_key="rss_atom",
+            collector_target_url=response.final_url,
         )
 
     def _recognize_html(self, response: SafeHttpResponse) -> RecognitionResult:
@@ -178,6 +206,7 @@ class SourceRecognizer:
                     ),
                     previewed_at=datetime.now(UTC),
                     adapter_key=listing.adapter_key,
+                    collector_target_url=response.final_url,
                 )
         parsed = urlsplit(response.final_url)
         title = " ".join(metadata.title.split())
@@ -189,6 +218,7 @@ class SourceRecognizer:
                 summary=_normalize_summary(title, metadata.description, date),
                 previewed_at=datetime.now(UTC),
                 adapter_key="single_policy_link",
+                collector_target_url=response.final_url,
             )
         return RecognitionResult(
             status="pending_verification",
@@ -196,6 +226,7 @@ class SourceRecognizer:
             summary=_PENDING_SUMMARY,
             previewed_at=None,
             adapter_key=None,
+            collector_target_url=None,
         )
 
     @staticmethod
@@ -211,7 +242,12 @@ class SourceRecognizer:
     @staticmethod
     def _rejected() -> RecognitionResult:
         return RecognitionResult(
-            status="rejected", kind=None, summary=_REJECTED_SUMMARY, previewed_at=None, adapter_key=None
+            status="rejected",
+            kind=None,
+            summary=_REJECTED_SUMMARY,
+            previewed_at=None,
+            adapter_key=None,
+            collector_target_url=None,
         )
 
 

@@ -19,6 +19,7 @@ def enqueue_enabled_ready_sources(db: Session, now: datetime) -> int:
             PolicySource.is_enabled.is_(True),
             PolicySource.recognition_status == "enabled",
             PolicySource.adapter_key.in_(_RELEASED_COLLECTOR_KEYS),
+            PolicySource.collector_target_url.is_not(None),
         )
     )
     created = 0

@@ -21,6 +21,7 @@ def _source(db, owner):
     source = PolicySource(
         name="广东省工业和信息化厅",
         home_url="https://gdii.gd.gov.cn",
+        collector_target_url="https://gdii.gd.gov.cn",
         adapter_key="gdii",
         adapter_status="ready",
         is_enabled=True,

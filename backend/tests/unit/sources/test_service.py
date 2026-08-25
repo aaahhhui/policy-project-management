@@ -25,13 +25,17 @@ class StubRecognizer:
         return self._results.pop(0)
 
 
-def _ready_result(adapter_key: str = "rss_atom") -> RecognitionResult:
+def _ready_result(
+    adapter_key: str = "rss_atom",
+    collector_target_url: str = "https://public.example/final-feed.xml",
+) -> RecognitionResult:
     return RecognitionResult(
         status="ready_to_enable",
         kind="rss_atom",
         summary="Public policy feed · 2 entries",
         previewed_at=datetime(2026, 8, 20, tzinfo=UTC),
         adapter_key=adapter_key,
+        collector_target_url=collector_target_url,
     )
 
 
@@ -42,6 +46,7 @@ def _pending_result() -> RecognitionResult:
         summary="This public URL needs verification",
         previewed_at=None,
         adapter_key=None,
+        collector_target_url=None,
     )
 
 
@@ -52,6 +57,7 @@ def _rejected_result() -> RecognitionResult:
         summary="Unable to safely inspect this public URL",
         previewed_at=None,
         adapter_key=None,
+        collector_target_url=None,
     )
 
 
@@ -74,6 +80,7 @@ def test_create_persists_only_safe_recognition_and_waits_for_owner_confirmation(
     assert source.recognition_summary == "Public policy feed · 2 entries"
     assert source.previewed_at is not None
     assert source.adapter_key == "rss_atom"
+    assert source.collector_target_url == "https://public.example/final-feed.xml"
     assert source.is_enabled is False
     assert source.owner_confirmed_at is None
     assert source.enabled_at is None
@@ -135,7 +142,13 @@ def test_enable_and_disable_reject_stale_versions_and_invalid_states(db, seeded_
 
 
 def test_retry_replaces_pending_preview_without_automatic_enablement(db, seeded_owner):
-    recognizer = StubRecognizer(_pending_result(), _ready_result("single_policy_link"))
+    recognizer = StubRecognizer(
+        _pending_result(),
+        _ready_result(
+            "single_policy_link",
+            "https://public.example/final-policy",
+        ),
+    )
     service = SourceService(db, seeded_owner, recognizer=recognizer)
     pending = service.create(_create_payload())
 
@@ -151,6 +164,7 @@ def test_retry_replaces_pending_preview_without_automatic_enablement(db, seeded_
     assert retried.id == pending.id
     assert retried.recognition_status == "ready_to_enable"
     assert retried.adapter_key == "single_policy_link"
+    assert retried.collector_target_url == "https://public.example/final-policy"
     assert retried.is_enabled is False
     assert retried.owner_confirmed_at is None
     assert retried.enabled_at is None
@@ -207,6 +221,7 @@ def test_gdii_seed_is_server_owned_idempotent_and_waits_for_owner_confirmation(d
     assert repeated.id == seeded.id
     assert seeded.entry_url == GDII_SOURCE["entry_url"]
     assert seeded.adapter_key == "gdii"
+    assert seeded.collector_target_url == GDII_SOURCE["entry_url"]
     assert seeded.recognition_status == "ready_to_enable"
     assert seeded.recognition_kind == "supported_government_site"
     assert seeded.is_enabled is False
@@ -215,3 +230,62 @@ def test_gdii_seed_is_server_owned_idempotent_and_waits_for_owner_confirmation(d
         ("notices", "https://gdii.gd.gov.cn/zwgk/tzgg1011/index.html"),
         ("funds", "https://gdii.gd.gov.cn/xmzj1033/index.html"),
     ]
+
+
+@pytest.mark.parametrize(
+    ("target_url", "expected_code", "expected_name"),
+    [
+        (
+            "https://gdii.gd.gov.cn/zwgk/tzgg1011/index.html",
+            "notices",
+            "通知公告",
+        ),
+        (
+            "https://gdii.gd.gov.cn/xmzj1033/index.html",
+            "funds",
+            "项目资金",
+        ),
+    ],
+)
+def test_exact_gdii_recognition_materializes_only_the_server_registry_channel(
+    db, seeded_owner, target_url, expected_code, expected_name
+):
+    result = RecognitionResult(
+        status="ready_to_enable",
+        kind="supported_government_site",
+        summary="Official listing",
+        previewed_at=datetime(2026, 8, 20, tzinfo=UTC),
+        adapter_key="gdii",
+        collector_target_url=target_url,
+    )
+
+    source = SourceService(db, seeded_owner, recognizer=StubRecognizer(result)).create(
+        _create_payload("Recognized GDII", target_url)
+    )
+
+    assert source.collector_target_url == target_url
+    assert [(channel.code, channel.name, channel.list_url, channel.is_enabled) for channel in source.channels] == [
+        (expected_code, expected_name, target_url, True)
+    ]
+
+
+def test_gdii_adapter_with_non_registry_target_is_not_released_or_materialized(
+    db, seeded_owner
+):
+    result = RecognitionResult(
+        status="ready_to_enable",
+        kind="supported_government_site",
+        summary="Untrusted listing",
+        previewed_at=datetime(2026, 8, 20, tzinfo=UTC),
+        adapter_key="gdii",
+        collector_target_url="https://gdii.gd.gov.cn/not-released/index.html",
+    )
+
+    source = SourceService(db, seeded_owner, recognizer=StubRecognizer(result)).create(
+        _create_payload("Unreleased GDII", "https://gdii.gd.gov.cn/not-released/index.html")
+    )
+
+    assert source.recognition_status == "rejected"
+    assert source.adapter_key is None
+    assert source.collector_target_url is None
+    assert source.channels == []

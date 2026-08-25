@@ -11,6 +11,9 @@ def _source(db, owner, name: str, *, status: str, enabled: bool, adapter_key: st
     source = PolicySource(
         name=name,
         entry_url=f"https://{name.lower()}.example/feed.xml",
+        collector_target_url=(
+            f"https://{name.lower()}.example/feed.xml" if adapter_key is not None else None
+        ),
         adapter_key=adapter_key,
         adapter_status="ready" if adapter_key else "pending",
         recognition_status=status,

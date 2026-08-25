@@ -6,7 +6,11 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.modules.auth.models import User
 from app.modules.sources.models import PolicySource, SourceChannel
-from app.modules.sources.recognition import RecognitionResult, SourceRecognizer
+from app.modules.sources.recognition import (
+    RecognitionResult,
+    SourceRecognizer,
+    server_owned_gdii_channel,
+)
 from app.modules.sources.schemas import SourceChannelInput, SourceCreate, SourceRecognitionRetryInput, SourceUpdate
 
 
@@ -103,6 +107,7 @@ class SourceService:
             source.recognition_summary = ""
             source.previewed_at = None
             source.adapter_key = None
+            source.collector_target_url = None
             source.adapter_status = "pending"
             source.is_enabled = False
             source.owner_confirmed_at = None
@@ -159,6 +164,8 @@ class SourceService:
             raise SourceNotCollectable("source is not owner-enabled")
         if source.adapter_key not in _RELEASED_COLLECTOR_KEYS:
             raise SourceNotCollectable("source has no released collector")
+        if source.collector_target_url is None:
+            raise SourceNotCollectable("source has no validated collector target")
         return source
 
     def _get(self, source_id: int, *, lock: bool = False) -> PolicySource:
@@ -189,18 +196,51 @@ class SourceService:
                 summary="Unable to safely inspect this public URL",
                 previewed_at=None,
                 adapter_key=None,
+                collector_target_url=None,
             )
 
     @staticmethod
     def _apply_recognition(source: PolicySource, result: RecognitionResult) -> None:
-        if result.status == "ready_to_enable" and result.adapter_key in _RELEASED_COLLECTOR_KEYS:
+        target_url = result.collector_target_url
+        gdii_channel = (
+            server_owned_gdii_channel(target_url)
+            if result.adapter_key == "gdii" and target_url is not None
+            else None
+        )
+        released_result = (
+            result.status == "ready_to_enable"
+            and result.adapter_key in _RELEASED_COLLECTOR_KEYS
+            and target_url is not None
+            and (result.adapter_key != "gdii" or gdii_channel is not None)
+        )
+        if released_result:
             source.recognition_status = result.status
             source.recognition_kind = result.kind
             source.recognition_summary = result.summary
             source.previewed_at = result.previewed_at
             source.adapter_key = result.adapter_key
+            source.collector_target_url = target_url
             source.adapter_status = "ready"
             source.is_enabled = False
+            if gdii_channel is not None:
+                code, name, list_url = gdii_channel
+                existing = next(
+                    (channel for channel in source.channels if channel.code == code),
+                    None,
+                )
+                if existing is None:
+                    source.channels.append(
+                        SourceChannel(
+                            code=code,
+                            name=name,
+                            list_url=list_url,
+                            is_enabled=True,
+                        )
+                    )
+                else:
+                    existing.name = name
+                    existing.list_url = list_url
+                    existing.is_enabled = True
             return
         if result.status == "pending_verification":
             source.recognition_status = "pending_verification"
@@ -213,6 +253,7 @@ class SourceService:
             source.recognition_summary = "Unable to safely inspect this public URL"
             source.previewed_at = None
         source.adapter_key = None
+        source.collector_target_url = None
         source.adapter_status = "pending"
         source.is_enabled = False
 

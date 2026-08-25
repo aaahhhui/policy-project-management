@@ -68,6 +68,9 @@ def upgrade() -> None:
         batch_op.add_column(
             sa.Column("recognition_summary", sa.String(length=500), nullable=False, server_default="")
         )
+        batch_op.add_column(
+            sa.Column("collector_target_url", sa.String(length=2048), nullable=True)
+        )
         batch_op.add_column(sa.Column("previewed_at", sa.DateTime(timezone=True), nullable=True))
         batch_op.add_column(sa.Column("owner_confirmed_at", sa.DateTime(timezone=True), nullable=True))
         batch_op.add_column(sa.Column("enabled_at", sa.DateTime(timezone=True), nullable=True))
@@ -92,17 +95,30 @@ def upgrade() -> None:
         sa.text(
             "UPDATE policy_sources SET recognition_status = 'enabled', is_enabled = 1, "
             "recognition_summary = 'Migrated legacy source', "
+            "collector_target_url = entry_url, "
             "previewed_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP), "
             "owner_confirmed_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP), "
             "enabled_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP) "
-            "WHERE adapter_status = 'ready'"
+            "WHERE adapter_status = 'ready' AND is_enabled = 1"
+        )
+    )
+    op.execute(
+        sa.text(
+            "UPDATE policy_sources SET recognition_status = 'disabled', is_enabled = 0, "
+            "recognition_summary = 'Migrated legacy source', "
+            "collector_target_url = entry_url, "
+            "previewed_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP), "
+            "owner_confirmed_at = NULL, enabled_at = NULL, "
+            "disabled_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP) "
+            "WHERE adapter_status = 'ready' AND is_enabled = 0"
         )
     )
     op.execute(
         sa.text(
             "UPDATE policy_sources SET recognition_status = 'pending_verification', "
             "adapter_key = NULL, is_enabled = 0, recognition_summary = 'Migrated legacy source', "
-            "owner_confirmed_at = NULL, enabled_at = NULL, disabled_at = NULL "
+            "collector_target_url = NULL, owner_confirmed_at = NULL, enabled_at = NULL, "
+            "disabled_at = NULL "
             "WHERE adapter_status = 'pending'"
         )
     )
@@ -129,7 +145,8 @@ def downgrade() -> None:
     op.execute(
         sa.text(
             "UPDATE policy_sources SET adapter_status = CASE "
-            "WHEN recognition_status = 'enabled' THEN 'ready' ELSE 'pending' END"
+            "WHEN recognition_status IN ('enabled', 'disabled', 'ready_to_enable') "
+            "AND adapter_key IS NOT NULL THEN 'ready' ELSE 'pending' END"
         )
     )
     with op.batch_alter_table("policy_sources") as batch_op:
@@ -140,6 +157,7 @@ def downgrade() -> None:
         batch_op.drop_column("enabled_at")
         batch_op.drop_column("owner_confirmed_at")
         batch_op.drop_column("previewed_at")
+        batch_op.drop_column("collector_target_url")
         batch_op.drop_column("recognition_summary")
         batch_op.drop_column("recognition_kind")
         batch_op.drop_column("recognition_status")

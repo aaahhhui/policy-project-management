@@ -34,6 +34,7 @@ def _recognized_result(entry_url: str) -> RecognitionResult:
         summary="Safe public feed",
         previewed_at=datetime.now(UTC),
         adapter_key="rss_atom",
+        collector_target_url=entry_url,
     )
 
 
@@ -97,7 +98,14 @@ def test_owner_source_lifecycle_uses_public_projection_pagination_and_stable_err
     assert "secret-query-token" not in created.text
     assert source["region_labels"] == ["广东"]
     assert source["topic_labels"] == ["制造"]
-    assert {"adapter_key", "raw_html", "headers", "channels", "home_url"}.isdisjoint(source)
+    assert {
+        "adapter_key",
+        "collector_target_url",
+        "raw_html",
+        "headers",
+        "channels",
+        "home_url",
+    }.isdisjoint(source)
 
     assert client.post(
         f"/api/sources/{source['id']}/enable", json={"expected_version": source["version"]}
@@ -185,6 +193,7 @@ def test_source_api_removes_existing_record_user_info_and_query_from_entry_url(
             recognition_status="ready_to_enable",
             recognition_kind="rss_atom",
             recognition_summary="Safe public feed",
+            collector_target_url="https://public.example/feed.xml",
             is_enabled=False,
             created_by=seeded_owner.id,
             updated_by=seeded_owner.id,

@@ -59,6 +59,7 @@ def _new_seed_source(actor: User) -> PolicySource:
     source = PolicySource(
         name=GDII_SOURCE["name"],
         entry_url=GDII_SOURCE["entry_url"],
+        collector_target_url=GDII_SOURCE["entry_url"],
         adapter_key="gdii",
         adapter_status="ready",
         recognition_status="ready_to_enable",

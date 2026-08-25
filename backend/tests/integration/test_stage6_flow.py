@@ -76,6 +76,7 @@ def _recognition_result(entry_url: str) -> RecognitionResult:
         summary="公开政策 Feed 预览",
         previewed_at=datetime.now(UTC),
         adapter_key="rss_atom",
+        collector_target_url=entry_url,
     )
 
 

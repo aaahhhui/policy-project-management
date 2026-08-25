@@ -45,6 +45,7 @@ def test_recognizer_accepts_valid_rss_and_atom_feeds(body: bytes, content_type: 
     assert result.status == "ready_to_enable"
     assert result.kind == "rss_atom"
     assert result.adapter_key == "rss_atom"
+    assert result.collector_target_url == "https://feeds.example/policies.xml"
     assert result.previewed_at is not None
     assert "Policy" in result.summary
 
@@ -70,6 +71,7 @@ def test_recognizer_accepts_only_released_gdii_listing_urls(url: str, kind: str)
     assert result.status == "ready_to_enable"
     assert result.kind == kind
     assert result.adapter_key == "gdii"
+    assert result.collector_target_url == url
 
 
 def test_recognizer_accepts_bounded_public_policy_document_preview() -> None:
@@ -91,6 +93,7 @@ def test_recognizer_accepts_bounded_public_policy_document_preview() -> None:
     assert result.status == "ready_to_enable"
     assert result.kind == "one_off_policy_link"
     assert result.adapter_key == "single_policy_link"
+    assert result.collector_target_url == "https://example.gov/policy/42?token=redacted"
     assert "Enterprise support guide" in result.summary
     assert "2026-08-20" in result.summary
     assert "token=" not in result.summary
@@ -165,3 +168,23 @@ def test_recognizer_does_not_allow_generic_http_client_injection() -> None:
     with httpx.Client() as client:
         with pytest.raises(TypeError):
             SourceRecognizer(client=client)
+
+
+def test_recognizer_carries_only_the_validated_redirect_target_to_collection() -> None:
+    final_url = "https://redirect.example/final-feed.xml"
+
+    def fetcher(entry_url: str, resolver) -> SafeHttpResponse:
+        assert entry_url == "https://source.example/feed.xml"
+        assert resolver is public_dns
+        return SafeHttpResponse(
+            final_url=final_url,
+            content_type="application/rss+xml",
+            body=b"<rss><channel><title>Redirected feed</title></channel></rss>",
+        )
+
+    result = SourceRecognizer(fetcher=fetcher, resolver=public_dns).recognize(
+        "https://source.example/feed.xml"
+    )
+
+    assert result.status == "ready_to_enable"
+    assert result.collector_target_url == final_url

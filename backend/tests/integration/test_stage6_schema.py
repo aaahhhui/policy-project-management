@@ -57,19 +57,24 @@ def _insert_stage5_records(connection: Connection) -> None:
             "INSERT INTO policy_sources "
             "(id, name, home_url, adapter_key, adapter_status, is_enabled, created_by, updated_by) "
             "VALUES (1, 'Ready source', 'https://gdii.gd.gov.cn', 'gdii', 'ready', 1, 1, 1), "
-            "(2, 'Pending source', 'https://example.gov', 'unreleased', 'pending', 1, 1, 1)"
+            "(2, 'Pending source', 'https://example.gov', 'unreleased', 'pending', 1, 1, 1), "
+            "(3, 'Owner-disabled ready source', 'https://gdii.gd.gov.cn/disabled', "
+            "'gdii', 'ready', 0, 1, 1)"
         )
     )
     connection.execute(
         text(
             "INSERT INTO source_channels (id, source_id, code, name, list_url, is_enabled) "
-            "VALUES (1, 1, 'notices', 'Notices', 'https://gdii.gd.gov.cn/notices', 1)"
+            "VALUES (1, 1, 'notices', 'Notices', 'https://gdii.gd.gov.cn/notices', 1), "
+            "(2, 3, 'disabled-history', 'Disabled history', "
+            "'https://gdii.gd.gov.cn/disabled-history', 0)"
         )
     )
     connection.execute(
         text(
             "INSERT INTO collection_tasks (id, source_id, trigger_type, status) "
-            "VALUES (1, 1, 'scheduled', 'succeeded')"
+            "VALUES (1, 1, 'scheduled', 'succeeded'), "
+            "(2, 3, 'manual', 'succeeded')"
         )
     )
     connection.execute(
@@ -106,14 +111,23 @@ def test_stage6_upgrade_preserves_stage5_records_and_backfills_safe_defaults(
     source = stage6_connection.execute(
         text(
             "SELECT entry_url, adapter_key, recognition_status, recognition_kind, "
-            "recognition_summary, region_labels, topic_labels, is_enabled, version "
+            "recognition_summary, collector_target_url, region_labels, topic_labels, "
+            "is_enabled, version "
             "FROM policy_sources WHERE id = 1"
         )
     ).mappings().one()
     pending = stage6_connection.execute(
         text(
-            "SELECT adapter_key, recognition_status, recognition_kind, is_enabled, version "
+            "SELECT adapter_key, recognition_status, recognition_kind, collector_target_url, "
+            "is_enabled, version "
             "FROM policy_sources WHERE id = 2"
+        )
+    ).mappings().one()
+    owner_disabled = stage6_connection.execute(
+        text(
+            "SELECT entry_url, adapter_key, recognition_status, collector_target_url, "
+            "is_enabled, owner_confirmed_at, enabled_at, disabled_at, version "
+            "FROM policy_sources WHERE id = 3"
         )
     ).mappings().one()
     shared = stage6_connection.execute(
@@ -128,6 +142,7 @@ def test_stage6_upgrade_preserves_stage5_records_and_backfills_safe_defaults(
     assert source["recognition_status"] == "enabled"
     assert source["recognition_kind"] is None
     assert source["recognition_summary"] == "Migrated legacy source"
+    assert source["collector_target_url"] == "https://gdii.gd.gov.cn"
     assert source["region_labels"] == "[]"
     assert source["topic_labels"] == "[]"
     for label_column in ("region_labels", "topic_labels"):
@@ -140,17 +155,27 @@ def test_stage6_upgrade_preserves_stage5_records_and_backfills_safe_defaults(
         "adapter_key": None,
         "recognition_status": "pending_verification",
         "recognition_kind": None,
+        "collector_target_url": None,
         "is_enabled": False,
         "version": 1,
     }
+    assert owner_disabled["entry_url"] == "https://gdii.gd.gov.cn/disabled"
+    assert owner_disabled["adapter_key"] == "gdii"
+    assert owner_disabled["recognition_status"] == "disabled"
+    assert owner_disabled["collector_target_url"] == "https://gdii.gd.gov.cn/disabled"
+    assert not owner_disabled["is_enabled"]
+    assert owner_disabled["owner_confirmed_at"] is None
+    assert owner_disabled["enabled_at"] is None
+    assert owner_disabled["disabled_at"] is not None
+    assert owner_disabled["version"] == 1
     assert shared["version"] == 1
     assert [dict(entity) for entity in entities] == [
         {"id": 1, "version": 1},
         {"id": 2, "version": 1},
         {"id": 3, "version": 1},
     ]
-    assert stage6_connection.execute(text("SELECT count(*) FROM source_channels")).scalar_one() == 1
-    assert stage6_connection.execute(text("SELECT count(*) FROM collection_tasks")).scalar_one() == 1
+    assert stage6_connection.execute(text("SELECT count(*) FROM source_channels")).scalar_one() == 2
+    assert stage6_connection.execute(text("SELECT count(*) FROM collection_tasks")).scalar_one() == 2
     audit_indexes = {
         tuple(index["column_names"])
         for index in inspect(stage6_connection).get_indexes("audit_events")
@@ -204,7 +229,7 @@ def test_stage6_database_rejects_unknown_recognition_codes(stage6_connection: Co
                     "INSERT INTO policy_sources "
                     "(id, name, entry_url, adapter_status, is_enabled, recognition_status, "
                     "recognition_summary, created_by, updated_by) VALUES "
-                    "(3, 'Invalid status', 'https://invalid-status.example', :adapter_status, "
+                    "(4, 'Invalid status', 'https://invalid-status.example', :adapter_status, "
                     ":is_enabled, 'unknown', '', :created_by, :updated_by)"
                 ),
                 base_values,
@@ -217,7 +242,7 @@ def test_stage6_database_rejects_unknown_recognition_codes(stage6_connection: Co
                     "INSERT INTO policy_sources "
                     "(id, name, entry_url, adapter_status, is_enabled, recognition_status, "
                     "recognition_kind, recognition_summary, created_by, updated_by) VALUES "
-                    "(4, 'Invalid kind', 'https://invalid-kind.example', :adapter_status, "
+                    "(5, 'Invalid kind', 'https://invalid-kind.example', :adapter_status, "
                     ":is_enabled, 'pending_verification', 'unknown', '', :created_by, :updated_by)"
                 ),
                 base_values,
@@ -298,6 +323,9 @@ def test_stage6_downgrade_restores_stage5_source_shape(stage6_connection: Connec
     pending = stage6_connection.execute(
         text("SELECT adapter_key, adapter_status, is_enabled FROM policy_sources WHERE id = 2")
     ).mappings().one()
+    owner_disabled = stage6_connection.execute(
+        text("SELECT adapter_key, adapter_status, is_enabled FROM policy_sources WHERE id = 3")
+    ).mappings().one()
 
     assert "home_url" in columns
     assert "entry_url" not in columns
@@ -312,8 +340,13 @@ def test_stage6_downgrade_restores_stage5_source_shape(stage6_connection: Connec
         "adapter_status": "pending",
         "is_enabled": False,
     }
-    assert stage6_connection.execute(text("SELECT count(*) FROM source_channels")).scalar_one() == 1
-    assert stage6_connection.execute(text("SELECT count(*) FROM collection_tasks")).scalar_one() == 1
+    assert dict(owner_disabled) == {
+        "adapter_key": "gdii",
+        "adapter_status": "ready",
+        "is_enabled": False,
+    }
+    assert stage6_connection.execute(text("SELECT count(*) FROM source_channels")).scalar_one() == 2
+    assert stage6_connection.execute(text("SELECT count(*) FROM collection_tasks")).scalar_one() == 2
     assert stage6_connection.execute(text("SELECT count(*) FROM enterprise_profiles")).scalar_one() == 1
     assert stage6_connection.execute(text("SELECT count(*) FROM business_entities")).scalar_one() == 3
     assert {
@@ -330,6 +363,17 @@ def test_stage6_downgrade_restores_stage5_source_shape(stage6_connection: Connec
     }
     assert "entry_url" in upgraded_columns
     assert "home_url" not in upgraded_columns
+    reupgraded_disabled = stage6_connection.execute(
+        text(
+            "SELECT recognition_status, collector_target_url, is_enabled "
+            "FROM policy_sources WHERE id = 3"
+        )
+    ).mappings().one()
+    assert dict(reupgraded_disabled) == {
+        "recognition_status": "disabled",
+        "collector_target_url": "https://gdii.gd.gov.cn/disabled",
+        "is_enabled": False,
+    }
     assert {
         "notification_deliveries",
         "notification_attempts",

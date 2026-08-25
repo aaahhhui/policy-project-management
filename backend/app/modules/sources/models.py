@@ -76,6 +76,7 @@ class PolicySource(Base, TimestampMixin):
     recognition_summary: Mapped[str] = mapped_column(
         String(500), nullable=False, default="", server_default=""
     )
+    collector_target_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     previewed_at: Mapped[datetime | None] = mapped_column(nullable=True)
     owner_confirmed_at: Mapped[datetime | None] = mapped_column(nullable=True)
     enabled_at: Mapped[datetime | None] = mapped_column(nullable=True)

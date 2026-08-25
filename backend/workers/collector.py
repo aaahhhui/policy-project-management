@@ -63,17 +63,18 @@ def run_once(
             _finish_fixed_url_task(session_factory, task_id, False)
             return True
         adapter_key = source.adapter_key
-        entry_url = source.entry_url
+        collector_target_url = source.collector_target_url
         if (
             source.recognition_status != "enabled"
             or not source.is_enabled
             or adapter_key not in _RELEASED_COLLECTOR_KEYS
+            or collector_target_url is None
         ):
             _finish_fixed_url_task(session_factory, task_id, False)
             return True
         if adapter_key in _FIXED_URL_COLLECTOR_KEYS:
             try:
-                public_url_inspector(entry_url)
+                public_url_inspector(collector_target_url)
             except Exception:
                 _finish_fixed_url_task(session_factory, task_id, False)
             else:
