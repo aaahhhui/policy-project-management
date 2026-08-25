@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from copy import deepcopy
 from datetime import datetime
 from typing import Literal
 
@@ -10,6 +11,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 _STATUS_PATTERN = re.compile(r"^[a-z0-9_]{1,64}$")
 _SECRET_KEY_PATTERN = re.compile(r"password|secret|token|authorization|credential|header|path", re.IGNORECASE)
 _MAX_PROFILE_DATA_BYTES = 32 * 1024
+_MAX_PROFILE_DATA_DEPTH = 4
+_MAX_PROFILE_DATA_NODES = 64
+_MAX_PROFILE_LIST_LENGTH = 32
+PROFILE_REDACTED_SENTINEL = "[redacted]"
 
 
 class ProfileVersionConflict(Exception):
@@ -26,6 +31,10 @@ class ProfileWriteForbidden(Exception):
     pass
 
 
+class ProfileFieldValidationError(ValueError):
+    pass
+
+
 def _trim_required(value: str, field_name: str) -> str:
     normalized = value.strip()
     if not normalized:
@@ -38,22 +47,105 @@ def _is_scalar(value: object) -> bool:
 
 
 def _validate_profile_data(value: dict[str, object]) -> dict[str, object]:
-    for key, item in value.items():
-        if not isinstance(key, str) or not key.strip() or len(key) > 64:
-            raise ValueError("data keys must be nonblank strings of at most 64 characters")
+    node_count = 0
+
+    def visit(item: object, depth: int) -> None:
+        nonlocal node_count
+        node_count += 1
+        if node_count > _MAX_PROFILE_DATA_NODES:
+            raise ValueError("data must contain at most 64 nodes")
         if _is_scalar(item):
-            continue
-        if isinstance(item, list) and all(_is_scalar(element) for element in item):
-            continue
-        if isinstance(item, dict) and all(_is_scalar(element) for element in item.values()):
-            continue
-        raise ValueError("data values must be scalars, scalar lists, or one-level scalar objects")
+            return
+        if depth >= _MAX_PROFILE_DATA_DEPTH:
+            raise ValueError("data nesting depth must not exceed 4")
+        if isinstance(item, list):
+            if len(item) > _MAX_PROFILE_LIST_LENGTH:
+                raise ValueError("data lists must contain at most 32 items")
+            for element in item:
+                visit(element, depth + 1)
+            return
+        if isinstance(item, dict):
+            for key, nested in item.items():
+                if not isinstance(key, str) or not key.strip() or len(key) > 64:
+                    raise ValueError(
+                        "data keys must be nonblank strings of at most 64 characters"
+                    )
+                visit(nested, depth + 1)
+            return
+        raise ValueError("data values must be recursive JSON values")
+
+    visit(value, 0)
     try:
         encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
     except (TypeError, ValueError):
         raise ValueError("data must be JSON encodable") from None
     if len(encoded.encode("utf-8")) > _MAX_PROFILE_DATA_BYTES:
         raise ValueError("data must not exceed 32 KiB")
+    return value
+
+
+_ProfilePath = tuple[str | int, ...]
+
+
+def _secret_paths(value: object, path: _ProfilePath = ()) -> dict[_ProfilePath, object]:
+    found: dict[_ProfilePath, object] = {}
+    if isinstance(value, dict):
+        for raw_key, item in value.items():
+            key = str(raw_key)
+            item_path = (*path, key)
+            if _SECRET_KEY_PATTERN.search(key):
+                found[item_path] = item
+            else:
+                found.update(_secret_paths(item, item_path))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            found.update(_secret_paths(item, (*path, index)))
+    return found
+
+
+def _replace_path(value: object, path: _ProfilePath, replacement: object) -> None:
+    current = value
+    for part in path[:-1]:
+        if isinstance(part, int):
+            assert isinstance(current, list)
+            current = current[part]
+        else:
+            assert isinstance(current, dict)
+            current = current[part]
+    final = path[-1]
+    if isinstance(final, int):
+        assert isinstance(current, list)
+        current[final] = replacement
+    else:
+        assert isinstance(current, dict)
+        current[final] = replacement
+
+
+def merge_profile_data(
+    existing: dict[str, object], incoming: dict[str, object]
+) -> dict[str, object]:
+    existing_secrets = _secret_paths(existing)
+    incoming_secrets = _secret_paths(incoming)
+    if set(existing_secrets) != set(incoming_secrets):
+        raise ProfileFieldValidationError("protected profile fields cannot be added or removed")
+    if any(value != PROFILE_REDACTED_SENTINEL for value in incoming_secrets.values()):
+        raise ProfileFieldValidationError("protected profile fields cannot be overwritten")
+    merged = deepcopy(incoming)
+    for path, original in existing_secrets.items():
+        _replace_path(merged, path, deepcopy(original))
+    return merged
+
+
+def project_profile_data(value: object, field_name: str = "") -> object:
+    if field_name and _SECRET_KEY_PATTERN.search(field_name):
+        return PROFILE_REDACTED_SENTINEL
+    if isinstance(value, dict):
+        return {
+            str(key): project_profile_data(item, str(key))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [project_profile_data(item) for item in value]
     return value
 
 

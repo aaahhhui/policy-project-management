@@ -1,8 +1,11 @@
+from pathlib import Path
+
 from sqlalchemy import select
 
 from app.modules.audit.models import AuditEvent
 from app.modules.auth.models import Role, User
 from app.modules.profiles.models import BusinessEntity, EnterpriseProfile
+from app.modules.profiles.seed import import_enterprise_seed
 
 
 def _seed_profiles(db):
@@ -100,13 +103,12 @@ def test_only_owner_can_write_versioned_profiles_with_safe_errors(
         json={
             "expected_version": 1,
             "display_name": "Changed shared",
-            "data": {"api_token": "keep-secret", "industry": "Software"},
+            "data": {"industry": "Software"},
         },
     )
     assert update.status_code == 200
     assert update.json()["version"] == 2
-    assert update.json()["recent_audits"][0]["after_values"]["data.api_token"] == "[redacted]"
-    assert "keep-secret" not in update.text
+    assert update.json()["data"] == {"industry": "Software"}
 
     stale = client.patch(
         "/api/profiles/shared", json={"expected_version": 1, "display_name": "stale"}
@@ -239,3 +241,96 @@ def test_entities_route_excludes_non_stage_one_entities(client, db, seeded_owner
         "ENTITY-SUZHOU",
         "ENTITY-SHENZHEN",
     ]
+
+
+def test_profile_route_roundtrip_preserves_long_data_and_legacy_secret(
+    client, db, seeded_owner, seeded_owner_password
+):
+    _seed_profiles(db)
+    profile = db.scalar(select(EnterpriseProfile))
+    assert profile is not None
+    long_note = "x" * 300
+    long_list = list(range(21))
+    profile.data = {
+        "note": long_note,
+        "items": long_list,
+        "api_token": "legacy-token-must-stay-private",
+    }
+    db.commit()
+    _login(client, seeded_owner_password)
+
+    read = client.get("/api/profiles/shared")
+    assert read.status_code == 200
+    assert read.json()["data"] == {
+        "note": long_note,
+        "items": long_list,
+        "api_token": "[redacted]",
+    }
+    updated = client.patch(
+        "/api/profiles/shared",
+        json={
+            "expected_version": 1,
+            "data": {**read.json()["data"], "industry": "Software"},
+        },
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["data"] == {
+        "note": long_note,
+        "items": long_list,
+        "api_token": "[redacted]",
+        "industry": "Software",
+    }
+    assert "legacy-token-must-stay-private" not in updated.text
+    db.refresh(profile)
+    assert profile.data["api_token"] == "legacy-token-must-stay-private"
+
+
+def test_profile_route_rejects_new_or_replaced_secret_like_data_with_stable_code(
+    client, db, seeded_owner, seeded_owner_password
+):
+    _seed_profiles(db)
+    _login(client, seeded_owner_password)
+
+    response = client.patch(
+        "/api/profiles/shared",
+        json={
+            "expected_version": 1,
+            "data": {"industries": ["Software"], "api_token": "new-secret"},
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == {"code": "profile_field_validation_failed"}
+    profile = db.scalar(select(EnterpriseProfile))
+    assert profile is not None
+    assert profile.version == 1
+    assert db.scalar(select(AuditEvent)) is None
+
+
+def test_canonical_seeded_entity_allows_legal_name_and_status_only_edit(
+    client, db, seeded_owner, seeded_owner_password
+):
+    seed_path = (
+        Path(__file__).parents[4]
+        / "data"
+        / "seed"
+        / "enterprise-profile.initial.json"
+    )
+    import_enterprise_seed(db, seed_path)
+    _login(client, seeded_owner_password)
+
+    response = client.patch(
+        "/api/profiles/entities/ENTITY-BEIJING",
+        json={
+            "expected_version": 1,
+            "legal_name": "北京适创科技有限公司（已复核）",
+            "verification_status": "business_license_reviewed",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["legal_name"] == "北京适创科技有限公司（已复核）"
+    assert payload["verification_status"] == "business_license_reviewed"
+    assert payload["data"]["qualifications"][0]["source_refs"] == ["S05", "S06"]

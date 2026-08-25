@@ -18,6 +18,8 @@ from app.modules.profiles.schemas import (
     ProfileWriteForbidden,
     VersionedBusinessEntityResponse,
     VersionedProfileResponse,
+    merge_profile_data,
+    project_profile_data,
     redact_audit_value,
 )
 
@@ -121,6 +123,10 @@ class ProfileService:
         after: dict[str, object] = {}
         changed_fields: list[str] = []
         present = payload.model_fields_set
+        prepared_data: dict[str, object] | None = None
+        if "data" in present:
+            assert payload.data is not None
+            prepared_data = merge_profile_data(record.data, payload.data)
         for field_name in (name_field, "verification_status"):
             if field_name not in present:
                 continue
@@ -132,10 +138,9 @@ class ProfileService:
             after[field_name] = redact_audit_value(field_name, new_value)
             changed_fields.append(field_name)
             setattr(record, field_name, new_value)
-        if "data" in present and record.data != payload.data:
+        if prepared_data is not None and record.data != prepared_data:
             old_data = record.data
-            new_data = payload.data
-            assert new_data is not None
+            new_data = prepared_data
             data_changes: list[tuple[str, object | None, object | None, bool, bool]] = []
             for key in sorted(set(old_data) | set(new_data)):
                 old_value = old_data.get(key)
@@ -217,4 +222,6 @@ class ProfileService:
 
     @staticmethod
     def _safe_profile_data(data: dict[str, object]) -> dict[str, object]:
-        return {key: redact_audit_value(key, value) for key, value in data.items()}
+        projected = project_profile_data(data)
+        assert isinstance(projected, dict)
+        return cast(dict[str, object], projected)

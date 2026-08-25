@@ -11,11 +11,14 @@ from app.modules.collection.models import CollectionTask
 from app.modules.evaluations.models import EvaluationBatch, PolicyConclusionDecision
 from app.modules.notifications.models import NotificationAttempt, NotificationDelivery
 from app.modules.policies.models import Policy
-from app.modules.profiles.models import EnterpriseProfile
+from app.modules.profiles.models import BusinessEntity, EnterpriseProfile
 from app.modules.sources.recognition import RecognitionResult
 from app.modules.sources.service import SourceService
 from tests.unit.evaluations.test_conclusion_decision_service import confirmed_policy
 from workers.scheduler import enqueue_enabled_ready_sources
+
+_SHARED_LEGACY_SECRET = "stage6-shared-secret-marker"
+_ENTITY_LEGACY_SECRET = "stage6-entity-secret-marker"
 
 
 def _login(client, login_name: str, password: str) -> None:
@@ -94,7 +97,7 @@ def _seed_profiles(db) -> None:
         EnterpriseProfile(
             code="COMPANY-SHARED",
             display_name="Stage 6 shared profile",
-            data={"industry": "software"},
+            data={"industry": "software", "api_token": _SHARED_LEGACY_SECRET},
             verification_status="public_verified",
         )
     )
@@ -135,6 +138,16 @@ def test_stage6_source_profile_loop_preserves_explicit_enablement_and_manual_dec
     )
     db.commit()
     assert policy.current_conclusion_source == "manual_override"
+    beijing_entity = db.scalar(
+        select(BusinessEntity).where(BusinessEntity.seed_code == "ENTITY-BEIJING")
+    )
+    assert beijing_entity is not None
+    beijing_entity.data = {
+        "region": "beijing",
+        "nested": {"value": 0},
+        "access_secret": _ENTITY_LEGACY_SECRET,
+    }
+    db.commit()
 
     _login(client, seeded_owner.login_name, seeded_owner_password)
     ready = client.post(
@@ -264,13 +277,12 @@ def test_stage6_source_profile_loop_preserves_explicit_enablement_and_manual_dec
         ).all()
     )
     before_shared_audits = _count(db, AuditEvent)
-    shared_secret_marker = "stage6-shared-secret-marker"
     shared_update = client.patch(
         "/api/profiles/shared",
         json={
             "expected_version": 1,
             "display_name": "Stage 6 shared profile updated",
-            "data": {"industry": "software", "api_token": shared_secret_marker},
+            "data": {"industry": "software", "api_token": "[redacted]"},
         },
     )
     assert shared_update.status_code == 200
@@ -279,16 +291,15 @@ def test_stage6_source_profile_loop_preserves_explicit_enablement_and_manual_dec
     shared_audit = shared_update.json()["recent_audits"][0]
     assert isinstance(shared_audit["id"], int) and shared_audit["id"] > 0
     assert shared_audit["action"] == "enterprise_profile_updated"
-    assert shared_audit["changed_fields"] == ["data.api_token", "display_name"]
+    assert shared_audit["changed_fields"] == ["display_name"]
     assert shared_audit["before_values"] == {"display_name": "Stage 6 shared profile"}
     assert shared_audit["after_values"] == {
-        "data.api_token": "[redacted]",
         "display_name": "Stage 6 shared profile updated",
     }
-    assert shared_secret_marker not in shared_update.text
+    assert shared_update.json()["data"]["api_token"] == "[redacted]"
+    assert _SHARED_LEGACY_SECRET not in shared_update.text
 
     before_entity_audits = _count(db, AuditEvent)
-    entity_secret_marker = "stage6-entity-secret-marker"
     entity_update = client.patch(
         "/api/profiles/entities/ENTITY-BEIJING",
         json={
@@ -297,7 +308,7 @@ def test_stage6_source_profile_loop_preserves_explicit_enablement_and_manual_dec
             "data": {
                 "region": "beijing",
                 "nested": {"value": 1},
-                "access_secret": entity_secret_marker,
+                "access_secret": "[redacted]",
             },
         },
     )
@@ -308,13 +319,17 @@ def test_stage6_source_profile_loop_preserves_explicit_enablement_and_manual_dec
     assert isinstance(entity_audit["id"], int) and entity_audit["id"] > 0
     assert entity_audit["id"] != shared_audit["id"]
     assert entity_audit["action"] == "business_entity_updated"
-    assert entity_audit["changed_fields"] == ["data.access_secret", "legal_name"]
-    assert entity_audit["before_values"] == {"legal_name": "Beijing"}
+    assert entity_audit["changed_fields"] == ["data.nested", "legal_name"]
+    assert entity_audit["before_values"] == {
+        "data.nested": {"value": 0},
+        "legal_name": "Beijing",
+    }
     assert entity_audit["after_values"] == {
-        "data.access_secret": "[redacted]",
+        "data.nested": {"value": 1},
         "legal_name": "Stage 6 Beijing entity updated",
     }
-    assert entity_secret_marker not in entity_update.text
+    assert entity_update.json()["data"]["access_secret"] == "[redacted]"
+    assert _ENTITY_LEGACY_SECRET not in entity_update.text
 
     stale = client.patch(
         "/api/profiles/shared",
@@ -339,10 +354,10 @@ def test_stage6_source_profile_loop_preserves_explicit_enablement_and_manual_dec
     reader_entity_audit = reader_entity["recent_audits"][0]
     assert reader_shared_audit == shared_audit
     assert reader_entity_audit == entity_audit
-    assert reader_shared_audit["after_values"]["data.api_token"] == "[redacted]"
-    assert reader_entity_audit["after_values"]["data.access_secret"] == "[redacted]"
-    assert shared_secret_marker not in reader_shared.text
-    assert entity_secret_marker not in reader_entities.text
+    assert reader_shared.json()["data"]["api_token"] == "[redacted]"
+    assert reader_entity["data"]["access_secret"] == "[redacted]"
+    assert _SHARED_LEGACY_SECRET not in reader_shared.text
+    assert _ENTITY_LEGACY_SECRET not in reader_entities.text
 
     db.expire_all()
     persisted_policy = db.get(Policy, policy.id)

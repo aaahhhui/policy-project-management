@@ -11,6 +11,7 @@ from app.modules.auth.dependencies import get_current_user, require_role
 from app.modules.auth.models import User
 from app.modules.profiles.schemas import (
     BusinessEntityPatchInput,
+    ProfileFieldValidationError,
     ProfileNotFound,
     ProfilePatchInput,
     ProfileVersionConflict,
@@ -78,7 +79,7 @@ def update_shared_profile(
         response = ProfileService(db).update_shared(payload, user)
         db.commit()
         return response
-    except (ProfileNotFound, ProfileVersionConflict) as error:
+    except (ProfileNotFound, ProfileVersionConflict, ProfileFieldValidationError) as error:
         db.rollback()
         raise _profile_error_response(error) from None
 
@@ -94,6 +95,6 @@ def update_business_entity(
         response = ProfileService(db).update_entity(seed_code, payload, user)
         db.commit()
         return response
-    except (ProfileNotFound, ProfileVersionConflict) as error:
+    except (ProfileNotFound, ProfileVersionConflict, ProfileFieldValidationError) as error:
         db.rollback()
         raise _profile_error_response(error) from None

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
+import pytest
 from sqlalchemy import func, select
 
 from app.modules.audit.models import AuditEvent
@@ -55,7 +59,10 @@ def test_shared_update_versions_audits_and_redacts_changed_values(db, seeded_own
         ProfilePatchInput(
             expected_version=1,
             display_name="  新名称  ",
-            data={"contact_email": "owner@example.com", "authorization_header": "nope"},
+            data={
+                "contact_email": "owner@example.com",
+                "secret_token": "[redacted]",
+            },
         ),
         seeded_owner,
     )
@@ -70,23 +77,19 @@ def test_shared_update_versions_audits_and_redacts_changed_values(db, seeded_own
     assert audits[0].object_type == "enterprise_profile"
     assert audits[0].changes == {
         "changed_fields": [
-            "data.authorization_header",
             "data.contact_email",
-            "data.secret_token",
             "display_name",
         ],
         "before": {
             "data.contact_email": "contacts@supreium.com",
-            "data.secret_token": "[redacted]",
             "display_name": "适创科技",
         },
         "after": {
-            "data.authorization_header": "[redacted]",
             "data.contact_email": "owner@example.com",
             "display_name": "新名称",
         },
     }
-    assert updated.recent_audits[0].after_values["data.authorization_header"] == "[redacted]"
+    assert updated.data["secret_token"] == "[redacted]"
 
 
 def test_shared_update_preserves_manual_policy_conclusion_and_creates_no_stage4_notifications(
@@ -192,14 +195,132 @@ def test_profile_patch_rejects_unsafe_or_unbounded_shape_before_audit(db, seeded
     with __import__("pytest").raises(ValueError):
         ProfilePatchInput(
             expected_version=1,
-            data={"nested": {"one": {"too": "deep"}}},
+            data={"nested": {"one": {"two": {"three": {"too": "deep"}}}}},
         )
     assert db.scalar(select(func.count()).select_from(AuditEvent)) == 0
 
 
+def test_profile_patch_accepts_canonical_recursive_seed_with_tight_resource_bounds() -> None:
+    seed_path = (
+        Path(__file__).parents[4]
+        / "data"
+        / "seed"
+        / "enterprise-profile.initial.json"
+    )
+    source = json.loads(seed_path.read_text(encoding="utf-8"))
+
+    payload = BusinessEntityPatchInput(
+        expected_version=1,
+        data=source["business_entities"][1],
+    )
+
+    assert payload.data == source["business_entities"][1]
+    assert ProfilePatchInput(expected_version=1, data={"values": list(range(21))}).data == {
+        "values": list(range(21))
+    }
+    with pytest.raises(ValueError, match="nesting depth"):
+        ProfilePatchInput(
+            expected_version=1,
+            data={"a": {"b": {"c": {"d": {"e": 1}}}}},
+        )
+    with pytest.raises(ValueError, match="at most 64 nodes"):
+        ProfilePatchInput(
+            expected_version=1,
+            data={f"field_{index}": [index] for index in range(32)},
+        )
+    with pytest.raises(ValueError, match="at most 32 items"):
+        ProfilePatchInput(expected_version=1, data={"values": list(range(33))})
+
+
+def test_profile_response_roundtrip_preserves_long_values_and_legacy_secret(
+    db, seeded_owner
+) -> None:
+    long_note = "长" * 300
+    long_list = list(range(21))
+    legacy_secret = "legacy-api-token-value"
+    nested_legacy_secret = "nested-legacy-token-value"
+    _seed_profiles(db)
+    profile = db.scalar(select(EnterpriseProfile))
+    assert profile is not None
+    profile.data = {
+        "note": long_note,
+        "items": long_list,
+        "api_token": legacy_secret,
+        "connections": [{"name": "primary", "api_token": nested_legacy_secret}],
+    }
+    db.commit()
+    service = ProfileService(db)
+
+    projected = service.get_shared_profile(seeded_owner)
+    assert projected.data == {
+        "note": long_note,
+        "items": long_list,
+        "api_token": "[redacted]",
+        "connections": [{"name": "primary", "api_token": "[redacted]"}],
+    }
+    updated = service.update_shared(
+        ProfilePatchInput(
+            expected_version=1,
+            data={**projected.data, "industry": "industrial_software"},
+        ),
+        seeded_owner,
+    )
+
+    db.flush()
+    assert profile.data == {
+        "note": long_note,
+        "items": long_list,
+        "api_token": legacy_secret,
+        "connections": [{"name": "primary", "api_token": nested_legacy_secret}],
+        "industry": "industrial_software",
+    }
+    assert updated.data == {
+        "note": long_note,
+        "items": long_list,
+        "api_token": "[redacted]",
+        "connections": [{"name": "primary", "api_token": "[redacted]"}],
+        "industry": "industrial_software",
+    }
+    assert legacy_secret not in str(updated.model_dump())
+    assert nested_legacy_secret not in str(updated.model_dump())
+
+
+@pytest.mark.parametrize(
+    "incoming_data",
+    [
+        {"contact_email": "contacts@supreium.com", "secret_token": "replacement"},
+        {
+            "contact_email": "contacts@supreium.com",
+            "secret_token": "[redacted]",
+            "authorization_header": "[redacted]",
+        },
+        {"contact_email": "contacts@supreium.com"},
+    ],
+)
+def test_profile_patch_rejects_secret_overwrite_addition_or_implicit_removal(
+    db, seeded_owner, incoming_data
+) -> None:
+    _seed_profiles(db)
+
+    with pytest.raises(ValueError):
+        ProfileService(db).update_shared(
+            ProfilePatchInput(expected_version=1, data=incoming_data),
+            seeded_owner,
+        )
+
+    profile = db.scalar(select(EnterpriseProfile))
+    assert profile is not None
+    assert profile.version == 1
+    assert profile.data["secret_token"] == "hidden"
+    assert db.scalar(select(AuditEvent)) is None
+
+
 def test_audit_bounds_large_data_field_changes_without_storing_raw_blob(db, seeded_owner):
     _seed_profiles(db)
-    replacement = {f"field_{index}": "v" * 200 for index in range(25)}
+    replacement = {
+        "secret_token": "[redacted]",
+        **{f"field_{index}": "v" * 200 for index in range(25)},
+    }
 
     ProfileService(db).update_shared(
         ProfilePatchInput(expected_version=1, data=replacement), seeded_owner
