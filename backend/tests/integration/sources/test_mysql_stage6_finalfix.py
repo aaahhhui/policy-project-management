@@ -181,10 +181,10 @@ def test_mysql_disable_commit_cannot_queue_a_collection_task() -> None:
             source_id = connection.execute(
                 text(
                     "INSERT INTO policy_sources "
-                    "(name, entry_url, home_url, collector_target_url, adapter_key, "
+                    "(name, entry_url, collector_target_url, adapter_key, "
                     "adapter_status, recognition_status, recognition_summary, is_enabled, "
                     "created_by, updated_by) VALUES "
-                    "(:name, 'https://public.example/source', 'https://public.example/source', "
+                    "(:name, 'https://public.example/source', "
                     "'https://public.example/feed.xml', 'rss_atom', 'ready', 'enabled', '', 1, "
                     ":owner_id, :owner_id)"
                 ),

@@ -210,3 +210,29 @@ def test_source_api_removes_existing_record_user_info_and_query_from_entry_url(
     assert "crawler" not in response.text
     assert "secret-password" not in response.text
     assert "secret-query-token" not in response.text
+
+
+def test_source_route_normalizes_labels_and_rejects_oversized_items(
+    client, seeded_owner, seeded_owner_password, monkeypatch
+):
+    _install_recognizer(monkeypatch)
+    _login(client, seeded_owner_password)
+
+    created = client.post(
+        "/api/sources",
+        json={
+            **_payload("Normalized labels"),
+            "region_labels": ["  Guangdong  ", "Guangdong", "广东", " 广东 "],
+            "topic_labels": ["Funding", " Funding ", "Manufacturing"],
+        },
+    )
+
+    assert created.status_code == 201
+    assert created.json()["region_labels"] == ["Guangdong", "广东"]
+    assert created.json()["topic_labels"] == ["Funding", "Manufacturing"]
+    rejected = client.post(
+        "/api/sources",
+        json={**_payload("Oversized label"), "region_labels": ["x" * 65]},
+    )
+    assert rejected.status_code == 422
+    assert rejected.json()["detail"] == {"code": "invalid_source_request"}

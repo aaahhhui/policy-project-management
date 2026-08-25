@@ -37,7 +37,7 @@ def test_collector_process_registers_policy_table_for_task_item_foreign_key():
 def _ready_source(db, owner) -> PolicySource:
     source = PolicySource(
         name="Ready worker source",
-        home_url="https://example.com",
+        entry_url="https://example.com",
         collector_target_url="https://example.com",
         adapter_key="gdii",
         adapter_status="ready",

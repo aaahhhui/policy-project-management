@@ -62,12 +62,18 @@ def _task_response(task: CollectionTask) -> CollectionTaskResponse:
 def collect_source(source_id: int, user: Owner, db: Session = Depends(get_db)):
     try:
         return _task_response(CollectionTaskService(db).create(source_id, "manual", user.id))
-    except SourceNotFound as error:
-        raise HTTPException(status_code=404, detail="Source not found") from error
-    except SourceNotCollectable as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    except CollectionAlreadyRunning as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
+    except SourceNotFound:
+        raise HTTPException(
+            status_code=404, detail={"code": "source_not_found"}
+        ) from None
+    except SourceNotCollectable:
+        raise HTTPException(
+            status_code=409, detail={"code": "source_not_collectable"}
+        ) from None
+    except CollectionAlreadyRunning:
+        raise HTTPException(
+            status_code=409, detail={"code": "collection_already_running"}
+        ) from None
 
 
 @router.get("/api/collection-tasks", response_model=list[CollectionTaskResponse])
@@ -81,6 +87,8 @@ def get_collection_task(
 ):
     try:
         return _task_response(CollectionTaskService(db).get(task_id))
-    except CollectionTaskNotFound as error:
-        raise HTTPException(status_code=404, detail="Collection task not found") from error
+    except CollectionTaskNotFound:
+        raise HTTPException(
+            status_code=404, detail={"code": "collection_task_not_found"}
+        ) from None
 

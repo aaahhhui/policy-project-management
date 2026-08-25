@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import Boolean, Enum, ForeignKey, Integer, JSON, String, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship, synonym
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
 from app.modules.auth.models import User
@@ -54,9 +54,6 @@ class PolicySource(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     entry_url: Mapped[str] = mapped_column(String(2048), nullable=False)
-    # The service remains on its Stage 5 request shape until Task 3 replaces it.
-    # Keep this server-side compatibility alias out of all public contracts.
-    home_url = synonym("entry_url")
     adapter_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     adapter_status: Mapped[str] = mapped_column(ADAPTER_STATUS_TYPE, nullable=False)
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)

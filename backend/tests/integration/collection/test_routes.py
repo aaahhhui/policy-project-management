@@ -13,7 +13,7 @@ def _login(client, password, login_name):
 def _ready_source(db, owner) -> PolicySource:
     source = PolicySource(
         name="Ready source",
-        home_url="https://example.com",
+        entry_url="https://example.com",
         collector_target_url="https://example.com",
         adapter_key="gdii",
         adapter_status="ready",
@@ -61,6 +61,47 @@ def test_owner_can_trigger_and_read_collection_task(
     assert detail.status_code == 200
     assert detail.json()["source_id"] == source.id
     assert detail.json()["status"] == "pending"
+
+
+def test_collection_route_returns_only_stable_generic_conflict_codes(
+    client, db, seeded_owner, seeded_owner_password
+):
+    disabled = _ready_source(db, seeded_owner)
+    disabled.recognition_status = "disabled"
+    disabled.is_enabled = False
+    db.commit()
+    _login(client, seeded_owner_password, "owner")
+
+    not_collectable = client.post(f"/api/sources/{disabled.id}/collect")
+
+    assert not_collectable.status_code == 409
+    assert not_collectable.json()["detail"] == {"code": "source_not_collectable"}
+    assert "released collector" not in not_collectable.text
+    disabled.recognition_status = "enabled"
+    disabled.is_enabled = True
+    db.commit()
+    first = client.post(f"/api/sources/{disabled.id}/collect")
+    assert first.status_code == 201
+
+    duplicate = client.post(f"/api/sources/{disabled.id}/collect")
+
+    assert duplicate.status_code == 409
+    assert duplicate.json()["detail"] == {"code": "collection_already_running"}
+    assert "active collection task" not in duplicate.text
+
+
+def test_collection_route_returns_stable_generic_not_found_codes(
+    client, seeded_owner, seeded_owner_password
+):
+    _login(client, seeded_owner_password, "owner")
+
+    missing_source = client.post("/api/sources/999999/collect")
+    missing_task = client.get("/api/collection-tasks/999999")
+
+    assert missing_source.status_code == 404
+    assert missing_source.json()["detail"] == {"code": "source_not_found"}
+    assert missing_task.status_code == 404
+    assert missing_task.json()["detail"] == {"code": "collection_task_not_found"}
 
 
 def test_task_detail_redacts_crawl_errors_and_original_urls(client, db, seeded_owner, seeded_owner_password):

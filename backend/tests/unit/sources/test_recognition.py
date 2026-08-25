@@ -28,16 +28,23 @@ def _recognizer(handler) -> SourceRecognizer:
 
 
 @pytest.mark.parametrize(
-    ("body", "content_type"),
+    ("body", "content_type", "expected_count"),
     [
-        (b"<rss><channel><title>Policy notices</title><item/><item/></channel></rss>", "application/rss+xml"),
+        (
+            b"<rss><channel><title>Policy notices</title><item/><item/></channel></rss>",
+            "application/rss+xml",
+            2,
+        ),
         (
             b'<feed xmlns="http://www.w3.org/2005/Atom"><title>Policy updates</title><entry/></feed>',
             "application/atom+xml",
+            1,
         ),
     ],
 )
-def test_recognizer_accepts_valid_rss_and_atom_feeds(body: bytes, content_type: str) -> None:
+def test_recognizer_accepts_valid_rss_and_atom_feeds(
+    body: bytes, content_type: str, expected_count: int
+) -> None:
     recognizer = _recognizer(lambda request: httpx.Response(200, content=body, headers={"content-type": content_type}))
 
     result = recognizer.recognize("https://feeds.example/policies.xml")
@@ -47,7 +54,7 @@ def test_recognizer_accepts_valid_rss_and_atom_feeds(body: bytes, content_type: 
     assert result.adapter_key == "rss_atom"
     assert result.collector_target_url == "https://feeds.example/policies.xml"
     assert result.previewed_at is not None
-    assert "Policy" in result.summary
+    assert result.summary == f"feeds.example · {expected_count} entries"
 
 
 @pytest.mark.parametrize(
@@ -72,6 +79,7 @@ def test_recognizer_accepts_only_released_gdii_listing_urls(url: str, kind: str)
     assert result.kind == kind
     assert result.adapter_key == "gdii"
     assert result.collector_target_url == url
+    assert result.summary == "gdii.gd.gov.cn · Public policy listing"
 
 
 def test_recognizer_accepts_bounded_public_policy_document_preview() -> None:
@@ -94,11 +102,7 @@ def test_recognizer_accepts_bounded_public_policy_document_preview() -> None:
     assert result.kind == "one_off_policy_link"
     assert result.adapter_key == "single_policy_link"
     assert result.collector_target_url == "https://example.gov/policy/42?token=redacted"
-    assert "Enterprise support guide" in result.summary
-    assert "2026-08-20" in result.summary
-    assert "token=" not in result.summary
-    assert "x-secret" not in result.summary
-    assert "unreviewed private body text" not in result.summary
+    assert result.summary == "example.gov · 2026-08-20"
 
 
 def test_recognizer_keeps_unsupported_public_html_pending_verification() -> None:
@@ -188,3 +192,83 @@ def test_recognizer_carries_only_the_validated_redirect_target_to_collection() -
 
     assert result.status == "ready_to_enable"
     assert result.collector_target_url == final_url
+
+
+@pytest.mark.parametrize(
+    ("url", "content_type", "body", "expected_summary"),
+    [
+        (
+            "https://feeds.example/policies.xml?token=query-secret-marker",
+            "application/rss+xml",
+            b"<rss><channel><title>Authorization: Bearer feed-secret-marker\n"
+            b"X-Api-Key: header-secret-marker</title><item/></channel></rss>",
+            "feeds.example · 1 entries",
+        ),
+        (
+            "https://gdii.gd.gov.cn/zwgk/tzgg1011/index.html?token=query-secret-marker",
+            "text/html",
+            b"<html><title>Authorization: Bearer listing-secret-marker\r\n"
+            b"raw error: stack-secret-marker</title></html>",
+            "gdii.gd.gov.cn · Public policy listing",
+        ),
+        (
+            "https://example.gov/policy/42?token=query-secret-marker",
+            "text/html",
+            b"<html><head><title>Authorization: Bearer title-secret-marker</title>"
+            b'<meta name="description" content="X-Api-Key: description-secret-marker">'
+            b'</head><time datetime="2026-08-20"></time></html>',
+            "example.gov · 2026-08-20",
+        ),
+    ],
+)
+def test_recognition_summary_does_not_reflect_untrusted_metadata_or_query_values(
+    url: str, content_type: str, body: bytes, expected_summary: str
+) -> None:
+    recognizer = _recognizer(
+        lambda request: httpx.Response(
+            200, content=body, headers={"content-type": content_type}
+        )
+    )
+
+    result = recognizer.recognize(url)
+
+    assert result.status == "ready_to_enable"
+    assert result.summary == expected_summary
+    for marker in (
+        "query-secret-marker",
+        "feed-secret-marker",
+        "header-secret-marker",
+        "listing-secret-marker",
+        "stack-secret-marker",
+        "title-secret-marker",
+        "description-secret-marker",
+        "Authorization",
+        "X-Api-Key",
+        "raw error",
+        "\r",
+        "\n",
+    ):
+        assert marker not in result.summary
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'<!DOCTYPE rss [<!ENTITY reflected "entity-secret-marker">]>'
+        b"<rss><channel><title>&reflected;</title></channel></rss>",
+        b'<!EnTiTy reflected "entity-secret-marker">'
+        b"<rss><channel><title>Feed</title></channel></rss>",
+    ],
+)
+def test_recognizer_rejects_hostile_doctype_or_entity_declarations(body: bytes) -> None:
+    recognizer = _recognizer(
+        lambda request: httpx.Response(
+            200, content=body, headers={"content-type": "application/rss+xml"}
+        )
+    )
+
+    result = recognizer.recognize("https://feeds.example/policies.xml")
+
+    assert result.status == "rejected"
+    assert result.summary == "Unable to safely inspect this public URL"
+    assert "entity-secret-marker" not in result.summary

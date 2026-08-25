@@ -11,7 +11,7 @@ from app.modules.sources.recognition import (
     SourceRecognizer,
     server_owned_gdii_channel,
 )
-from app.modules.sources.schemas import SourceChannelInput, SourceCreate, SourceRecognitionRetryInput, SourceUpdate
+from app.modules.sources.schemas import SourceCreate, SourceRecognitionRetryInput
 
 
 _RELEASED_COLLECTOR_KEYS = frozenset({"gdii", "rss_atom", "single_policy_link"})
@@ -265,28 +265,3 @@ class SourceService:
         if self.actor is None:
             raise ValueError("an actor is required for source management")
         return self.actor.id
-
-    @staticmethod
-    def _channel(channel: SourceChannelInput) -> SourceChannel:
-        return SourceChannel(
-            code=channel.code,
-            name=channel.name,
-            list_url=channel.list_url,
-            is_enabled=channel.is_enabled,
-        )
-
-    def _reconcile_channels(self, source: PolicySource, payload: SourceUpdate) -> None:
-        assert payload.channels is not None
-        existing = {channel.code: channel for channel in source.channels}
-        requested_codes = {channel.code for channel in payload.channels}
-        for channel in source.channels:
-            if channel.code not in requested_codes:
-                channel.is_enabled = False
-        for input_channel in payload.channels:
-            matched_channel = existing.get(input_channel.code)
-            if matched_channel is None:
-                source.channels.append(self._channel(input_channel))
-                continue
-            matched_channel.name = input_channel.name
-            matched_channel.list_url = input_channel.list_url
-            matched_channel.is_enabled = input_channel.is_enabled

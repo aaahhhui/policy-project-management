@@ -34,7 +34,7 @@ def test_task_item_rejects_duplicate_exact_business_identity(db) -> None:
     db.flush()
     source = PolicySource(
         name="Task source",
-        home_url="https://example.test",
+        entry_url="https://example.test",
         adapter_status="ready",
         is_enabled=True,
         created_by=owner.id,

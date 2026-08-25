@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Literal
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator, model_validator
+
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
 
 _HTTP_URL = TypeAdapter(AnyHttpUrl)
 
@@ -47,34 +48,6 @@ def _absolute_http_url(value: str) -> str:
     return str(parsed)
 
 
-class SourceChannelInput(BaseModel):
-    code: str = Field(max_length=64)
-    name: str = Field(max_length=255)
-    list_url: str = Field(max_length=2048)
-    is_enabled: bool = True
-
-    @field_validator("code", "name")
-    @classmethod
-    def trim_required_text(cls, value: str, info) -> str:
-        return _trim_nonblank(value, info.field_name)
-
-    @field_validator("list_url")
-    @classmethod
-    def validate_list_url(cls, value: str) -> str:
-        return _absolute_http_url(value)
-
-
-class _ChannelCollection(BaseModel):
-    channels: list[SourceChannelInput] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def require_unique_channel_codes(self):
-        codes = [channel.code for channel in self.channels]
-        if len(codes) != len(set(codes)):
-            raise ValueError("channel code must be unique within a source")
-        return self
-
-
 class SourceCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -93,46 +66,24 @@ class SourceCreate(BaseModel):
     def validate_entry_url(cls, value: str) -> str:
         return _absolute_http_url(value)
 
-    @field_validator("region_labels", "topic_labels")
+    @field_validator("region_labels", "topic_labels", mode="before")
     @classmethod
-    def validate_labels(cls, values: list[str]) -> list[str]:
-        return [_trim_nonblank(value, "label") for value in values]
-
-
-class SourceUpdate(BaseModel):
-    name: str | None = Field(default=None, max_length=255)
-    home_url: str | None = Field(default=None, max_length=2048)
-    channels: list[SourceChannelInput] | None = None
-    is_enabled: bool | None = None
-
-    @field_validator("name")
-    @classmethod
-    def validate_optional_name(cls, value: str | None) -> str | None:
-        return _trim_nonblank(value, "name") if value is not None else value
-
-    @field_validator("home_url")
-    @classmethod
-    def validate_optional_home_url(cls, value: str | None) -> str | None:
-        return _absolute_http_url(value) if value is not None else value
-
-    @model_validator(mode="after")
-    def require_unique_channel_codes(self):
-        if self.channels is None:
-            return self
-        codes = [channel.code for channel in self.channels]
-        if len(codes) != len(set(codes)):
-            raise ValueError("channel code must be unique within a source")
-        return self
-
-
-class SourceChannelResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    code: str
-    name: str
-    list_url: str
-    is_enabled: bool
+    def validate_labels(cls, values: object) -> object:
+        if not isinstance(values, list):
+            return values
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            if not isinstance(value, str):
+                raise ValueError("labels must be strings")
+            label = _trim_nonblank(value, "label")
+            if len(label) > 64:
+                raise ValueError("labels must contain at most 64 characters")
+            if label in seen:
+                continue
+            seen.add(label)
+            normalized.append(label)
+        return normalized
 
 
 class SourceResponse(BaseModel):

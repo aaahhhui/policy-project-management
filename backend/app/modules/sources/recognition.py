@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date as calendar_date, datetime
@@ -26,6 +27,9 @@ RecognitionKind = Literal[
 _READY_STATUS: Literal["ready_to_enable"] = "ready_to_enable"
 _PENDING_SUMMARY = "This public URL needs verification"
 _REJECTED_SUMMARY = "Unable to safely inspect this public URL"
+_FORBIDDEN_XML_DECLARATION = re.compile(
+    br"<!\s*(?:doctype|entity)\b", re.IGNORECASE
+)
 SafeFetcher = Callable[[str, Resolver], SafeHttpResponse]
 
 
@@ -97,7 +101,6 @@ class _DocumentMetadataParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.title = ""
-        self.description = ""
         self.date = ""
         self._inside_title = False
 
@@ -105,8 +108,6 @@ class _DocumentMetadataParser(HTMLParser):
         values = {name.lower(): value or "" for name, value in attrs}
         if tag.lower() == "title":
             self._inside_title = True
-        elif tag.lower() == "meta" and values.get("name", "").lower() == "description":
-            self.description = self.description or values.get("content", "")
         elif tag.lower() == "time":
             self.date = self.date or values.get("datetime", "")
 
@@ -126,13 +127,6 @@ def _normalize_summary(*parts: str) -> str:
 
 def _local_name(element: ElementTree.Element) -> str:
     return element.tag.rsplit("}", 1)[-1].lower()
-
-
-def _first_child_text(root: ElementTree.Element, name: str) -> str:
-    for element in root.iter():
-        if _local_name(element) == name and element.text:
-            return element.text
-    return ""
 
 
 def _entry_count(root: ElementTree.Element, child_name: str) -> int:
@@ -170,20 +164,23 @@ class SourceRecognizer:
         return response.content_type.lower().split(";", 1)[0].strip() in {"text/html", "application/xhtml+xml"}
 
     def _recognize_feed(self, response: SafeHttpResponse) -> RecognitionResult:
+        if _FORBIDDEN_XML_DECLARATION.search(response.body):
+            return self._rejected()
         try:
             root = ElementTree.fromstring(response.body)
         except ElementTree.ParseError:
             return self._rejected()
         root_name = _local_name(root)
         if root_name == "rss":
-            title = _first_child_text(root, "title")
             count = _entry_count(root, "item")
         elif root_name == "feed":
-            title = _first_child_text(root, "title")
             count = _entry_count(root, "entry")
         else:
             return self._rejected()
-        summary = _normalize_summary(title or urlsplit(response.final_url).hostname or "Public feed", f"{count} entries")
+        summary = _normalize_summary(
+            urlsplit(response.final_url).hostname or "Public feed",
+            f"{count} entries",
+        )
         return RecognitionResult(
             status=_READY_STATUS,
             kind="rss_atom",
@@ -202,7 +199,8 @@ class SourceRecognizer:
                     status=_READY_STATUS,
                     kind=listing.kind,
                     summary=_normalize_summary(
-                        metadata.title or "Public policy listing", urlsplit(response.final_url).hostname or ""
+                        urlsplit(response.final_url).hostname or "Public source",
+                        "Public policy listing",
                     ),
                     previewed_at=datetime.now(UTC),
                     adapter_key=listing.adapter_key,
@@ -215,7 +213,7 @@ class SourceRecognizer:
             return RecognitionResult(
                 status=_READY_STATUS,
                 kind="one_off_policy_link",
-                summary=_normalize_summary(title, metadata.description, date),
+                summary=_normalize_summary(parsed.hostname or "Public source", date),
                 previewed_at=datetime.now(UTC),
                 adapter_key="single_policy_link",
                 collector_target_url=response.final_url,

@@ -10,7 +10,7 @@ from app.modules.sources.models import PolicySource, SourceChannel
 def _source_and_channel(db: Session, owner) -> tuple[PolicySource, SourceChannel]:
     source = PolicySource(
         name="Stage 4 source",
-        home_url="https://example.test",
+        entry_url="https://example.test",
         collector_target_url="https://example.test",
         adapter_key="gdii",
         adapter_status="ready",

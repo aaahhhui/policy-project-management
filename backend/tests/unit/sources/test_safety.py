@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 import gzip
+import tomllib
+from contextlib import contextmanager
+from pathlib import Path
 
 import httpx
 import pytest
@@ -92,6 +94,19 @@ def test_pinned_network_backend_connects_only_the_validated_address(monkeypatch)
 
     assert stream is token
     assert calls == [("93.184.216.34", 443)]
+
+
+def test_pinned_transport_dependency_is_explicit_and_real_transport_constructs() -> None:
+    pyproject = tomllib.loads(
+        (Path(__file__).parents[3] / "pyproject.toml").read_text(encoding="utf-8")
+    )
+
+    assert "httpcore==1.0.9" in pyproject["project"]["dependencies"]
+    transport = safety._PinnedHttpTransport("93.184.216.34")
+    try:
+        assert isinstance(transport, httpx.HTTPTransport)
+    finally:
+        transport.close()
 
 
 def test_inspect_public_url_rejects_oversized_content_length_before_streaming(monkeypatch) -> None:
