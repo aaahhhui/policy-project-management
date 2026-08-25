@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
@@ -235,7 +236,7 @@ def test_gdii_seed_is_server_owned_idempotent_and_waits_for_owner_confirmation(d
 
 
 def test_changed_source_seed_rerun_preserves_owner_config_version_and_channels(
-    db, seeded_owner, caplog
+    db, seeded_owner
 ):
     source = seed_gdii_source(db, seeded_owner)
     source.entry_url = "https://owner.example/source"
@@ -255,7 +256,8 @@ def test_changed_source_seed_rerun_preserves_owner_config_version_and_channels(
         for channel in source.channels
     ]
 
-    repeated = seed_gdii_source(db, seeded_owner)
+    with patch("app.modules.sources.seed.logger.warning") as warning:
+        repeated = seed_gdii_source(db, seeded_owner)
 
     db.refresh(source)
     assert repeated.id == source.id
@@ -283,8 +285,8 @@ def test_changed_source_seed_rerun_preserves_owner_config_version_and_channels(
         for channel in source.channels
     ] == expected_channels
     assert db.scalar(select(AuditEvent)) is None
-    assert "source_seed_existing_row_mismatch_skipped" in caplog.text
-    assert "owner-source-summary-marker" not in caplog.text
+    warning.assert_called_once_with("source_seed_existing_row_mismatch_skipped")
+    assert "owner-source-summary-marker" not in str(warning.call_args_list)
 
 
 @pytest.mark.parametrize(

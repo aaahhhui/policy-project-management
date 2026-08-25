@@ -91,8 +91,9 @@ def test_mysql_ready_disabled_and_collector_target_survive_stage6_roundtrip() ->
                     "INSERT INTO enterprise_profiles "
                     "(code, display_name, data, verification_status) VALUES "
                     "('COMPANY-SHARED', 'Final fix shared', "
-                    "'{\"nested\":{\"items\":[{\"value\":1}]}}', 'public_verified')"
-                )
+                    ":profile_data, 'public_verified')"
+                ),
+                {"profile_data": json.dumps({"nested": {"items": [{"value": 1}]}})},
             )
 
         command.upgrade(config, STAGE6_REVISION)
@@ -182,11 +183,11 @@ def test_mysql_disable_commit_cannot_queue_a_collection_task() -> None:
                 text(
                     "INSERT INTO policy_sources "
                     "(name, entry_url, collector_target_url, adapter_key, "
-                    "adapter_status, recognition_status, recognition_summary, is_enabled, "
-                    "created_by, updated_by) VALUES "
+                    "adapter_status, region_labels, topic_labels, recognition_status, "
+                    "recognition_summary, is_enabled, created_by, updated_by) VALUES "
                     "(:name, 'https://public.example/source', "
-                    "'https://public.example/feed.xml', 'rss_atom', 'ready', 'enabled', '', 1, "
-                    ":owner_id, :owner_id)"
+                    "'https://public.example/feed.xml', 'rss_atom', 'ready', '[]', '[]', "
+                    "'enabled', '', 1, :owner_id, :owner_id)"
                 ),
                 {"name": f"stage6-finalfix-race-{suffix}", "owner_id": owner_id},
             ).lastrowid

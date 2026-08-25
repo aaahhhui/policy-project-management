@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
@@ -57,7 +58,7 @@ def test_seed_is_idempotent(db, seed_path):
 
 
 def test_changed_seed_rerun_preserves_owner_profiles_and_versions(
-    db, seed_path, tmp_path, caplog
+    db, seed_path, tmp_path
 ):
     import_enterprise_seed(db, seed_path)
     shared = db.scalar(
@@ -84,7 +85,8 @@ def test_changed_seed_rerun_preserves_owner_profiles_and_versions(
     changed_path = tmp_path / "changed-seed.json"
     changed_path.write_text(json.dumps(changed_seed, ensure_ascii=False), encoding="utf-8")
 
-    import_enterprise_seed(db, changed_path)
+    with patch("app.modules.profiles.seed.logger.warning") as warning:
+        import_enterprise_seed(db, changed_path)
 
     db.refresh(shared)
     db.refresh(beijing)
@@ -111,9 +113,14 @@ def test_changed_seed_rerun_preserves_owner_profiles_and_versions(
         9,
     )
     assert db.scalar(select(AuditEvent)) is None
-    assert "profile_seed_existing_row_mismatch_skipped" in caplog.text
-    assert "changed-seed-shared-marker" not in caplog.text
-    assert "changed-seed-entity-marker" not in caplog.text
+    assert warning.call_count == 2
+    assert all(
+        call.args == ("profile_seed_existing_row_mismatch_skipped",)
+        and call.kwargs == {}
+        for call in warning.call_args_list
+    )
+    assert "changed-seed-shared-marker" not in str(warning.call_args_list)
+    assert "changed-seed-entity-marker" not in str(warning.call_args_list)
 
 
 def test_seed_rolls_back_every_change_when_one_entity_is_invalid(db, tmp_path):
