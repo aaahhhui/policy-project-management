@@ -442,3 +442,15 @@
 - 测试群机器人已用本地秘密配置完成实际发送，通知记录达到 `succeeded`；Webhook 值未写入 Git、文档、审计或日志。
 - 企业微信内置浏览器 UAT 已确认：消息打开登录页，测试负责人账号密码登录后安全回跳至通知详情；页面正常，移动端不显示手动重发。
 - 隔离 MySQL 已导入公开企业档案（1）、经营主体（3）和广东工信厅来源（1）。由于没有采集真实政策或创建项目，政策详情与项目移动端只读 UAT 尚未覆盖，不能由通知详情验收替代；这是 Stage 4 合并前剩余的业务消息验收项。
+
+## 31. 2026-08-24 Stage 6 来源识别与企业档案编辑交付基线
+
+- 已交付负责人来源闭环：公开入口受控识别、安全预览、`ready_to_enable` 后显式启用、待人工确认重试、拒绝/停用状态、仅启用来源进入既有 scheduler；前端不提供 adapter、channel、CSS/XPath、header、credential 或原始页面配置。
+- 已交付共享档案与经营主体的负责人版本化编辑、稳定冲突、每次成功写入恰好一条安全审计；reader 可读档案与审计但所有来源/档案写 API 返回 `403`，640px 保留内容且隐藏全部变更控件。
+- 纵向认证测试覆盖 recognized→preview→enable→scheduler、pending/retry 不调度、rejected 脱敏、owner/reader 权限、共享/主体版本与审计、稳定冲突，以及 EvaluationBatch、PolicyConclusionDecision、NotificationDelivery、NotificationAttempt、CollectionTask 无额外副作用和 `manual_override` 投影不变。临时反向变异证明测试可捕获“未显式启用即调度”。
+- Docker 隔离镜像完整回归为后端 `519 passed / 2 skipped`、Ruff 通过、mypy `93` 个源文件通过；前端 `35` 个文件 / `161` 项通过，Vue 类型检查和生产构建退出 `0`。
+- MySQL 8.4 fresh 验证发现 Stage 6 JSON 列字面量默认触发错误 `1101`；已按 TDD 改为 nullable 添加、真实 JSON 空数组回填、再收紧 NOT NULL。fresh `0001 -> 0009`、`0009 -> 0008 -> 0009` 和虚构档案数据保留均通过，隔离容器、卷、网络已精确清理。
+- Compose 自身仍因明确加载本地 `.env` 并需要数据库/JWT 测试秘密而未运行；本轮未读取该文件。无凭据的 native Python Playwright 已完成真实 Vue + fixture API 的桌面 owner、桌面 reader 和 640px fallback；完整登录全栈 UAT 明确延期，不能由 fallback 替代。
+- 两个不带 query 的公开 no-login host/path 直连均返回 HTTP `200`；由于全栈 UAT 门禁，真实应用识别仍延期，文档只记录安全 host/path、状态和受控 fixture 结果。
+- 安全扫描未发现新增私钥、Bearer/provider key、WeCom webhook 或宿主机路径；依赖审计仍有 Node transitive `nanoid` 的 high/moderate advisory，以及测试镜像内 pip/pytest 工具链 advisory，需单独依赖升级评审。
+- 明确排除并延期：任意 selector/自动抓取规则、自动历史重评、档案保存触发 AI 或通知、Stage 5 备份/恢复、WeCom 登录、生产迁移和生产部署。Stage 5 Docker/backup/recovery/UAT 门禁继续独立，不由 Stage 6 验收替代。
