@@ -26,11 +26,14 @@ class CollectionTaskService:
         self, source_id: int, trigger_type: str, requested_by: int | None
     ) -> CollectionTask:
         SourceService(self.db, None).assert_collectable(source_id, lock=True)
+        # Use a current read after the source lock, even with an older MySQL snapshot.
         active_id = self.db.scalar(
-            select(CollectionTask.id).where(
+            select(CollectionTask.id)
+            .where(
                 CollectionTask.source_id == source_id,
                 CollectionTask.status.in_(("pending", "running")),
             )
+            .with_for_update()
         )
         if active_id is not None:
             raise CollectionAlreadyRunning("source already has an active collection task")
