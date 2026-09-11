@@ -12,8 +12,9 @@ from alembic.config import Config
 from sqlalchemy import create_engine, event, func, select, text
 from sqlalchemy.orm import Session
 
+from app.modules.auth.models import User
 from app.modules.collection.models import CollectionTask
-from app.modules.collection.service import CollectionTaskService
+from app.modules.collection.service import CollectionAlreadyRunning, CollectionTaskService
 from app.modules.sources.models import PolicySource
 from app.modules.sources.service import SourceNotCollectable
 
@@ -29,6 +30,116 @@ STAGE6_REVISION = "0009_stage6_source_profile"
 
 def _config() -> Config:
     return Config(str(Path(__file__).parents[3] / "alembic.ini"))
+
+
+def test_mysql_old_snapshots_cannot_create_two_active_collection_tasks() -> None:
+    database_url = os.environ["DATABASE_URL"]
+    assert database_url.startswith("mysql+pymysql://")
+    engine = create_engine(database_url, pool_pre_ping=True)
+    source_id: int | None = None
+    owner_id: int | None = None
+    try:
+        with Session(engine, expire_on_commit=False) as setup:
+            owner = User(
+                login_name=f"stage6-residual-create-{uuid4().hex}",
+                display_name="Create race owner",
+                password_hash="unused",
+                is_active=True,
+            )
+            setup.add(owner)
+            setup.flush()
+            owner_id = owner.id
+            source = PolicySource(
+                name=f"stage6-residual-create-{uuid4().hex}",
+                entry_url="https://public.example/source",
+                collector_target_url="https://public.example/feed.xml",
+                adapter_key="rss_atom",
+                adapter_status="ready",
+                recognition_status="enabled",
+                is_enabled=True,
+                created_by=owner_id,
+                updated_by=owner_id,
+            )
+            setup.add(source)
+            setup.flush()
+            source_id = source.id
+            history = CollectionTask(source_id=source_id, trigger_type="manual", status="succeeded")
+            setup.add(history)
+            setup.commit()
+            history_id = history.id
+
+        active_tasks = select(CollectionTask.id).where(
+            CollectionTask.source_id == source_id,
+            CollectionTask.status.in_(("pending", "running")),
+        )
+        # Explicit sequencing keeps both transactions open before the first create.
+        # No threads or timing assumptions are needed to reproduce this interleaving.
+        with (
+            Session(engine, expire_on_commit=False) as first,
+            Session(engine, expire_on_commit=False) as second,
+        ):
+            first.begin()
+            second.begin()
+            assert first.scalar(text("SELECT @@transaction_isolation")) == "REPEATABLE-READ"
+            assert second.scalar(text("SELECT @@transaction_isolation")) == "REPEATABLE-READ"
+            assert first.scalar(text("SELECT CONNECTION_ID()")) != second.scalar(
+                text("SELECT CONNECTION_ID()")
+            )
+            assert list(first.scalars(active_tasks)) == []
+            assert list(second.scalars(active_tasks)) == []
+            second_transaction = second.get_transaction()
+
+            first_task = CollectionTaskService(first).create(source_id, "manual", owner_id)
+            assert first_task.status == "pending"
+            # A fresh transaction sees the committed row, while the second creator
+            # still sees its old empty snapshot without committing or rolling back.
+            with Session(engine) as observer:
+                assert list(observer.scalars(active_tasks)) == [first_task.id]
+            assert second.get_transaction() is second_transaction
+            assert list(second.scalars(active_tasks)) == []
+
+            acquired_source_locks: list[str] = []
+
+            def observe_source_lock(
+                _connection, _cursor, statement, _parameters, _context, _executemany
+            ) -> None:
+                if "policy_sources" in statement.lower() and "for update" in statement.lower():
+                    acquired_source_locks.append(statement)
+
+            # after_cursor_execute proves that the service obtained its current
+            # source lock, rather than merely attempting it, in the old transaction.
+            event.listen(second.connection(), "after_cursor_execute", observe_source_lock)
+            outcome = "queued"
+            try:
+                CollectionTaskService(second).create(source_id, "manual", owner_id)
+            except CollectionAlreadyRunning:
+                outcome = "already_running"
+                second.rollback()
+            assert len(acquired_source_locks) == 1
+
+        with Session(engine) as observer:
+            durable_active_ids = list(observer.scalars(active_tasks))
+            assert durable_active_ids == [first_task.id], (
+                f"old-snapshot creator outcome={outcome}; active task ids={durable_active_ids}"
+            )
+            assert outcome == "already_running"
+            assert observer.scalar(
+                select(CollectionTask.status).where(CollectionTask.id == history_id)
+            ) == "succeeded"
+    finally:
+        with engine.begin() as cleanup:
+            if source_id is not None:
+                cleanup.execute(
+                    text("DELETE FROM collection_tasks WHERE source_id = :source_id"),
+                    {"source_id": source_id},
+                )
+                cleanup.execute(
+                    text("DELETE FROM policy_sources WHERE id = :source_id"),
+                    {"source_id": source_id},
+                )
+            if owner_id is not None:
+                cleanup.execute(text("DELETE FROM users WHERE id = :owner_id"), {"owner_id": owner_id})
+        engine.dispose()
 
 
 def test_mysql_ready_disabled_and_collector_target_survive_stage6_roundtrip() -> None:
