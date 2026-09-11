@@ -228,6 +228,8 @@ class SourceService:
             source.is_enabled = False
             if gdii_channel is not None:
                 code, name, list_url = gdii_channel
+                for channel in source.channels:
+                    channel.is_enabled = False
                 existing = next(
                     (channel for channel in source.channels if channel.code == code),
                     None,

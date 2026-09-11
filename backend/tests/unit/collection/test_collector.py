@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.modules.collection.models import CollectionTask, CollectionTaskItem
@@ -362,6 +363,99 @@ def test_retried_representative_link_collects_its_validated_target(db, seeded_ow
 
     assert inspected_urls == [final_target]
     assert task.status == "succeeded"
+
+
+@pytest.mark.parametrize("recognition_status", ["pending_verification", "rejected"])
+def test_retried_migrated_gdii_source_retires_stale_channels_before_collection(
+    db, seeded_owner, recognition_status
+):
+    listing_url = "https://gdii.gd.gov.cn/zwgk/tzgg1011/index.html"
+    historical_listing_url = "https://legacy.example/notices"
+    unrelated_channel_url = "https://legacy.example/archive"
+    source = PolicySource(
+        name=f"Migrated {recognition_status} GDII source",
+        entry_url="https://legacy.example/source",
+        adapter_key=None,
+        adapter_status="pending",
+        recognition_status=recognition_status,
+        recognition_summary="Migrated source awaiting recognition",
+        is_enabled=False,
+        created_by=seeded_owner.id,
+        updated_by=seeded_owner.id,
+        channels=[
+            SourceChannel(
+                code="notices",
+                name="Historical notices",
+                list_url=historical_listing_url,
+                is_enabled=False,
+            ),
+            SourceChannel(
+                code="historical_archive",
+                name="Historical archive",
+                list_url=unrelated_channel_url,
+                is_enabled=True,
+            ),
+        ],
+    )
+    db.add(source)
+    db.commit()
+    selected_channel_id = source.channels[0].id
+    stale_channel_id = source.channels[1].id
+
+    service = SourceService(
+        db,
+        seeded_owner,
+        recognizer=_ResultRecognizer(
+            _recognition_result(
+                adapter_key="gdii",
+                collector_target_url=listing_url,
+                kind="supported_government_site",
+            )
+        ),
+    )
+    retried = service.retry_recognition(
+        source.id,
+        SourceRecognitionRetryInput(representative_url=listing_url),
+    )
+
+    assert retried.is_enabled is False
+    assert retried.owner_confirmed_at is None
+    service.enable(retried.id, retried.version)
+    task = CollectionTaskService(db).create(retried.id, "manual", seeded_owner.id)
+    commands: list[list[str]] = []
+
+    def runner(command, **kwargs):
+        del kwargs
+        commands.append(command)
+        return CompletedProcess(command, 0)
+
+    assert run_once(session_factory=lambda: nullcontext(db), runner=runner) is True
+
+    channels = list(
+        db.scalars(
+            select(SourceChannel)
+            .where(SourceChannel.source_id == source.id)
+            .order_by(SourceChannel.id)
+        )
+    )
+    assert [
+        (channel.id, channel.code, channel.name, channel.list_url, channel.is_enabled)
+        for channel in channels
+    ] == [
+        (selected_channel_id, "notices", "通知公告", listing_url, True),
+        (
+            stale_channel_id,
+            "historical_archive",
+            "Historical archive",
+            unrelated_channel_url,
+            False,
+        ),
+    ]
+    assert len(commands) == 1
+    assert commands[0][:4] == ["scrapy", "crawl", "gdii", "-a"]
+    assert f"task_id={task.id}" in commands[0]
+    assert f"channel_id={selected_channel_id}" in commands[0]
+    assert f"list_url={listing_url}" in commands[0]
 
 
 def test_exact_gdii_create_enable_collects_the_materialized_official_channel(
