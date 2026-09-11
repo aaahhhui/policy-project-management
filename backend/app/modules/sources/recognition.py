@@ -30,6 +30,16 @@ _REJECTED_SUMMARY = "Unable to safely inspect this public URL"
 _FORBIDDEN_XML_DECLARATION = re.compile(
     br"<!\s*(?:doctype|entity)\b", re.IGNORECASE
 )
+_UNSUPPORTED_XML_ENCODING_SIGNATURES = (
+    b"\x00\x00\xfe\xff",
+    b"\xff\xfe\x00\x00",
+    b"\xfe\xff",
+    b"\xff\xfe",
+    b"\x00\x00\x00<",
+    b"<\x00\x00\x00",
+    b"\x00<\x00?",
+    b"<\x00?\x00",
+)
 SafeFetcher = Callable[[str, Resolver], SafeHttpResponse]
 
 
@@ -164,7 +174,9 @@ class SourceRecognizer:
         return response.content_type.lower().split(";", 1)[0].strip() in {"text/html", "application/xhtml+xml"}
 
     def _recognize_feed(self, response: SafeHttpResponse) -> RecognitionResult:
-        if _FORBIDDEN_XML_DECLARATION.search(response.body):
+        if response.body.startswith(
+            _UNSUPPORTED_XML_ENCODING_SIGNATURES
+        ) or _FORBIDDEN_XML_DECLARATION.search(response.body):
             return self._rejected()
         try:
             root = ElementTree.fromstring(response.body)

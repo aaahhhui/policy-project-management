@@ -1,10 +1,76 @@
 from __future__ import annotations
 
+import codecs
+from xml.etree import ElementTree
+
 import httpx
 import pytest
 
+from app.modules.sources import recognition as recognition_module
 from app.modules.sources.recognition import SourceRecognizer
 from app.modules.sources.safety import SafeHttpResponse, UnsafePublicUrl
+
+
+def _hostile_feed_bytes(*, declaration: str, codec: str, bom: bytes = b"") -> bytes:
+    marker = f"{codec}-entity-secret-marker"
+    document = (
+        f'<?xml version="1.0" encoding="{declaration}"?>'
+        f'<!DOCTYPE rss [<!ENTITY reflected "{marker}">]>'
+        "<rss><channel><title>&reflected;</title><item/></channel></rss>"
+    )
+    return bom + document.encode(codec)
+
+
+_HOSTILE_UNSUPPORTED_XML_FIXTURES = [
+    pytest.param(
+        _hostile_feed_bytes(
+            declaration="UTF-16", codec="utf-16-le", bom=codecs.BOM_UTF16_LE
+        ),
+        "utf-16-le-entity-secret-marker",
+        id="utf-16-le-bom",
+    ),
+    pytest.param(
+        _hostile_feed_bytes(
+            declaration="UTF-16", codec="utf-16-be", bom=codecs.BOM_UTF16_BE
+        ),
+        "utf-16-be-entity-secret-marker",
+        id="utf-16-be-bom",
+    ),
+    pytest.param(
+        _hostile_feed_bytes(
+            declaration="UTF-32", codec="utf-32-le", bom=codecs.BOM_UTF32_LE
+        ),
+        "utf-32-le-entity-secret-marker",
+        id="utf-32-le-bom",
+    ),
+    pytest.param(
+        _hostile_feed_bytes(
+            declaration="UTF-32", codec="utf-32-be", bom=codecs.BOM_UTF32_BE
+        ),
+        "utf-32-be-entity-secret-marker",
+        id="utf-32-be-bom",
+    ),
+    pytest.param(
+        _hostile_feed_bytes(declaration="UTF-16LE", codec="utf-16-le"),
+        "utf-16-le-entity-secret-marker",
+        id="utf-16-le-byte-order-signature",
+    ),
+    pytest.param(
+        _hostile_feed_bytes(declaration="UTF-16BE", codec="utf-16-be"),
+        "utf-16-be-entity-secret-marker",
+        id="utf-16-be-byte-order-signature",
+    ),
+    pytest.param(
+        _hostile_feed_bytes(declaration="UTF-32LE", codec="utf-32-le"),
+        "utf-32-le-entity-secret-marker",
+        id="utf-32-le-byte-order-signature",
+    ),
+    pytest.param(
+        _hostile_feed_bytes(declaration="UTF-32BE", codec="utf-32-be"),
+        "utf-32-be-entity-secret-marker",
+        id="utf-32-be-byte-order-signature",
+    ),
+]
 
 
 def public_dns(_: str) -> list[str]:
@@ -55,6 +121,24 @@ def test_recognizer_accepts_valid_rss_and_atom_feeds(
     assert result.collector_target_url == "https://feeds.example/policies.xml"
     assert result.previewed_at is not None
     assert result.summary == f"feeds.example · {expected_count} entries"
+
+
+def test_recognizer_keeps_valid_utf8_xml_declaration_and_bom_supported() -> None:
+    body = codecs.BOM_UTF8 + (
+        b'<?xml version="1.0" encoding="UTF-8"?>'
+        b"<rss><channel><title>Policy notices</title><item/></channel></rss>"
+    )
+    recognizer = _recognizer(
+        lambda request: httpx.Response(
+            200, content=body, headers={"content-type": "application/rss+xml"}
+        )
+    )
+
+    result = recognizer.recognize("https://feeds.example/policies.xml")
+
+    assert result.status == "ready_to_enable"
+    assert result.kind == "rss_atom"
+    assert result.summary == "feeds.example · 1 entries"
 
 
 @pytest.mark.parametrize(
@@ -272,3 +356,34 @@ def test_recognizer_rejects_hostile_doctype_or_entity_declarations(body: bytes) 
     assert result.status == "rejected"
     assert result.summary == "Unable to safely inspect this public URL"
     assert "entity-secret-marker" not in result.summary
+
+
+@pytest.mark.parametrize(("body", "marker"), _HOSTILE_UNSUPPORTED_XML_FIXTURES)
+def test_recognizer_rejects_hostile_utf16_utf32_before_xml_parser(
+    body: bytes, marker: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parser_calls: list[str | bytes] = []
+    actual_fromstring = ElementTree.fromstring
+
+    def tracking_fromstring(source: str | bytes) -> ElementTree.Element:
+        parser_calls.append(source)
+        return actual_fromstring(source)
+
+    monkeypatch.setattr(recognition_module.ElementTree, "fromstring", tracking_fromstring)
+    recognizer = _recognizer(
+        lambda request: httpx.Response(
+            200, content=body, headers={"content-type": "application/rss+xml"}
+        )
+    )
+
+    result = recognizer.recognize("https://feeds.example/policies.xml?token=query-marker")
+
+    assert parser_calls == []
+    assert result.status == "rejected"
+    assert result.kind is None
+    assert result.adapter_key is None
+    assert result.collector_target_url is None
+    assert result.previewed_at is None
+    assert result.summary == "Unable to safely inspect this public URL"
+    for unsafe_detail in (marker, "encoding", "DOCTYPE", "ENTITY", "query-marker"):
+        assert unsafe_detail not in result.summary
