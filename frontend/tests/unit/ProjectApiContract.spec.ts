@@ -22,7 +22,7 @@ import {
   transitionProject,
   updateProject,
 } from "../../src/api/projects";
-import { businessErrorMessage } from "../../src/api/errors";
+import { businessErrorMessage, getBusinessErrorCode } from "../../src/api/errors";
 
 describe("project API contract", () => {
   beforeEach(() => {
@@ -95,6 +95,17 @@ describe("project API contract", () => {
         ? { code, current_version: 4 }
         : { code };
       expect(businessErrorMessage({ response: { status, data: { detail } } })).toBe(message);
+    }
+  });
+
+  it("rejects inherited prototype business codes without throwing", () => {
+    for (const code of ["toString", "constructor", "__proto__"]) {
+      const error = { response: { status: 422, data: { detail: { code } } } };
+
+      expect(() => getBusinessErrorCode(error)).not.toThrow();
+      expect(getBusinessErrorCode(error)).toBeNull();
+      expect(() => businessErrorMessage(error)).not.toThrow();
+      expect(businessErrorMessage(error)).toBe("操作未完成，请稍后重试。");
     }
   });
 });

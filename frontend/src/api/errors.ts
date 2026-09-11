@@ -83,7 +83,7 @@ export function getBusinessErrorCode(
   const detail = (data as { detail?: unknown }).detail;
   if (!detail || typeof detail !== "object") return null;
   const code = (detail as { code?: unknown }).code;
-  if (typeof code !== "string" || !(code in documentedBusinessStatuses)) return null;
+  if (typeof code !== "string" || !Object.prototype.hasOwnProperty.call(documentedBusinessStatuses, code)) return null;
   const documentedCode = code as BusinessErrorCode;
   const allowedStatuses: readonly number[] = documentedBusinessStatuses[documentedCode];
   if (!allowedStatuses.includes(status)) return null;
