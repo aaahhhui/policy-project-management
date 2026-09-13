@@ -21,6 +21,15 @@ def _hostile_feed_bytes(*, declaration: str, codec: str, bom: bytes = b"") -> by
     return bom + document.encode(codec)
 
 
+def _hostile_feed_without_declaration_bytes(*, codec: str) -> bytes:
+    marker = f"{codec}-entity-secret-marker"
+    document = (
+        f'<!DOCTYPE rss [<!ENTITY reflected "{marker}">]>'
+        "<rss><channel><title>&reflected;</title><item/></channel></rss>"
+    )
+    return document.encode(codec)
+
+
 _HOSTILE_UNSUPPORTED_XML_FIXTURES = [
     pytest.param(
         _hostile_feed_bytes(
@@ -59,6 +68,16 @@ _HOSTILE_UNSUPPORTED_XML_FIXTURES = [
         _hostile_feed_bytes(declaration="UTF-16BE", codec="utf-16-be"),
         "utf-16-be-entity-secret-marker",
         id="utf-16-be-byte-order-signature",
+    ),
+    pytest.param(
+        _hostile_feed_without_declaration_bytes(codec="utf-16-le"),
+        "utf-16-le-entity-secret-marker",
+        id="utf-16-le-declaration-free-byte-order-signature",
+    ),
+    pytest.param(
+        _hostile_feed_without_declaration_bytes(codec="utf-16-be"),
+        "utf-16-be-entity-secret-marker",
+        id="utf-16-be-declaration-free-byte-order-signature",
     ),
     pytest.param(
         _hostile_feed_bytes(declaration="UTF-32LE", codec="utf-32-le"),

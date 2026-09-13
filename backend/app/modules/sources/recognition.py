@@ -37,8 +37,8 @@ _UNSUPPORTED_XML_ENCODING_SIGNATURES = (
     b"\xff\xfe",
     b"\x00\x00\x00<",
     b"<\x00\x00\x00",
-    b"\x00<\x00?",
-    b"<\x00?\x00",
+    b"\x00<",
+    b"<\x00",
 )
 SafeFetcher = Callable[[str, Resolver], SafeHttpResponse]
 
