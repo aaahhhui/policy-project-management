@@ -454,3 +454,14 @@
 - 两个不带 query 的公开 no-login host/path 直连均返回 HTTP `200`；由于全栈 UAT 门禁，真实应用识别仍延期，文档只记录安全 host/path、状态和受控 fixture 结果。
 - 安全扫描未发现新增私钥、Bearer/provider key、WeCom webhook 或宿主机路径；Node 生产依赖审计的 high 为 transitive `nanoid` `GHSA-2v37-7h3g-55p8`，moderate 则是 transitive `postcss` `GHSA-fxqj-rqcc-2cmp`（两者均经 `element-plus -> ... -> vue -> @vue/compiler-sfc -> postcss` 路径），另有测试镜像内 pip/pytest 工具链 advisory，需单独依赖升级评审。
 - 明确排除并延期：任意 selector/自动抓取规则、自动历史重评、档案保存触发 AI 或通知、Stage 5 备份/恢复、WeCom 登录、生产迁移和生产部署。Stage 5 Docker/backup/recovery/UAT 门禁继续独立，不由 Stage 6 验收替代。
+
+## 32. 2026-09-13 Stage 6 最终残留项收口
+
+- 已从 `29c5d74` 开始完成聚焦 TDD 收口：GDII 重试会保留历史 channel 行但停用所有旧 channel，仅重新启用注册表选中的官方 channel；MySQL 8.4 `REPEATABLE-READ` 下，创建采集任务会在来源锁之后使用当前锁定读检查 active task，旧事务快照不再生成两个 pending/running 任务。
+- 同轮低风险加固已完成：前端业务错误码只接受映射对象自身键，原型链键安全回退；XML 识别在解析前拒绝 UTF-16/UTF-32 BOM、声明式以及无声明 UTF-16 `<!DOCTYPE` 输入，同时保留 UTF-8 BOM 正常识别。
+- 四项改动均有独立任务审查；XML 初审发现的无声明 UTF-16 缺口已按真实 RED/GREEN/反向变异补齐并经定向复审确认关闭。
+- fresh 验证：Linux 后端 `563 passed / 5 skipped`，Ruff 通过，mypy `93` 个源文件通过；SQLite Stage 6 schema `17 passed`；前端 `35` 个文件 / `164` 项测试通过，Vue TypeScript 检查与 Vite 生产构建退出 `0`。
+- fresh MySQL 8.4 从空卷升级至 `0009`，三个 Stage 6 集成门禁全部通过：迁移往返、disable-vs-create 竞态、旧快照 create-vs-create 竞态。测试资源使用内部网络且无宿主机端口发布，验收后按精确名称清理。
+- 无凭据浏览器验收使用真实当前 Vue build 与 fixture API：桌面负责人来源/档案写操作及审计可见，桌面 reader 可读且无写控件，640px 下来源/档案可读且写控件隐藏；预期的 `409`/`403` 浏览器控制台响应与契约一致。
+- 增量私钥、Bearer/provider token、WeCom webhook、宿主机路径和危险 DOM/执行 API 扫描无产品命中。Python `pip check` 无依赖冲突；镜像未安装 `pip-audit`。Node 生产依赖审计仍报告既有传递依赖 high `nanoid` `GHSA-2v37-7h3g-55p8` 与 moderate `postcss` `GHSA-fxqj-rqcc-2cmp`，本轮不扩大为依赖升级。
+- Compose 与带凭据的完整登录 UAT 仍明确延期：本轮未读取 `.env`、未启动 Compose。无凭据浏览器 fixture 验收与直接 MySQL 门禁不能替代该项。
