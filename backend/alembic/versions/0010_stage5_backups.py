@@ -81,6 +81,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_backup_jobs_requester_requested_id", table_name="backup_jobs")
-    op.drop_index("ix_backup_jobs_status_next_requested_id", table_name="backup_jobs")
     op.drop_table("backup_jobs")

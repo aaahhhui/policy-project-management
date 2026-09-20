@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable, Mapping
+from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import secrets
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -105,7 +107,7 @@ class RecoveryRunner(Protocol):
         arguments: tuple[str, ...],
         *,
         environment: dict[str, str],
-        input_data: bytes | None = None,
+        input_path: Path | None = None,
         timeout_seconds: int,
     ) -> str: ...
 
@@ -335,7 +337,19 @@ def restore_backup(
     try:
         with tempfile.TemporaryDirectory(prefix="stage5-recovery-") as temporary:
             extraction_root = Path(temporary)
-            _extract_archive(plan, extraction_root)
+            snapshot_set = extraction_root.joinpath(*PurePosixPath(set_path).parts)
+            snapshot_set.mkdir(parents=True)
+            for name in ("manifest.json", "database.sql", "files.tar"):
+                shutil.copyfile(plan.set_dir / name, snapshot_set / name)
+            snapshot_plan = build_recovery_plan(extraction_root, set_path, project_name)
+            if (
+                snapshot_plan.manifest != plan.manifest
+                or snapshot_plan.archive_file_count != plan.archive_file_count
+            ):
+                raise RecoveryRefused("recovery_set_changed")
+            file_input_root = extraction_root / "files"
+            file_input_root.mkdir()
+            _extract_archive(snapshot_plan, file_input_root)
             runner.run(
                 prefix + ("up", "-d", "mysql"),
                 environment=environment,
@@ -343,7 +357,11 @@ def restore_backup(
             )
             _wait_for_ready(
                 runner,
-                prefix + ("exec", "-T", "mysql", "mysqladmin", "ping", "-h", "localhost"),
+                prefix
+                + (
+                    "exec", "-T", "-e", "MYSQL_PWD", "mysql", "mysql",
+                    "-uroot", "-N", "-e", "SELECT 1", environment["MYSQL_DATABASE"],
+                ),
                 environment,
                 "recovery_mysql_timeout",
                 sleep,
@@ -362,7 +380,7 @@ def restore_backup(
                     environment["MYSQL_DATABASE"],
                 ),
                 environment=environment,
-                input_data=(plan.set_dir / "database.sql").read_bytes(),
+                input_path=snapshot_plan.set_dir / "database.sql",
                 timeout_seconds=SQL_IMPORT_TIMEOUT_SECONDS,
             )
             runner.run(
@@ -373,7 +391,7 @@ def restore_backup(
                     "--no-deps",
                     "-T",
                     "-v",
-                    f"{extraction_root}:/input:ro",
+                    f"{file_input_root}:/input:ro",
                     "restore-files",
                     "cp",
                     "-a",
@@ -477,19 +495,21 @@ class DockerRecoveryRunner:
         arguments: tuple[str, ...],
         *,
         environment: dict[str, str],
-        input_data: bytes | None = None,
+        input_path: Path | None = None,
         timeout_seconds: int,
     ) -> str:
         try:
-            result = subprocess.run(
-                arguments,
-                check=False,
-                input=input_data,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                timeout=timeout_seconds,
-                env=self._process_environment(environment),
-            )
+            with ExitStack() as stack:
+                input_stream = stack.enter_context(input_path.open("rb")) if input_path else None
+                result = subprocess.run(
+                    arguments,
+                    check=False,
+                    stdin=input_stream,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    timeout=timeout_seconds,
+                    env=self._process_environment(environment),
+                )
         except subprocess.TimeoutExpired:
             raise RecoveryRefused("recovery_docker_timeout") from None
         if result.returncode != 0:

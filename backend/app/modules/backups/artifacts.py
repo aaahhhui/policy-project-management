@@ -6,13 +6,15 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
+import io
 import json
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import shutil
 import subprocess
 import tarfile
-from typing import Any
+import time
+from typing import Any, cast
 from uuid import uuid4
 
 from sqlalchemy.engine import make_url
@@ -103,11 +105,13 @@ def _inside(root: Path, relative: str) -> Path:
     return candidate
 
 
-def _sha256_and_size(path: Path) -> tuple[str, int]:
+def _sha256_and_size(path: Path, ensure_time: Callable[[], object] | None = None) -> tuple[str, int]:
     digest = hashlib.sha256()
     size = 0
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            if ensure_time is not None:
+                ensure_time()
             digest.update(chunk)
             size += len(chunk)
     return digest.hexdigest(), size
@@ -149,7 +153,9 @@ def _manifest_file(entry: object) -> BackupManifestFile:
     return BackupManifestFile(path=path, size=size, sha256=sha256)
 
 
-def validate_backup_set(root: Path, relative_set_path: str) -> BackupManifest:
+def validate_backup_set(
+    root: Path, relative_set_path: str, *, ensure_time: Callable[[], object] | None = None
+) -> BackupManifest:
     """Validate a completed set without exposing local paths or contents."""
 
     backup_set = _inside(root, relative_set_path)
@@ -190,7 +196,7 @@ def validate_backup_set(root: Path, relative_set_path: str) -> BackupManifest:
         file_path = _inside(backup_set, entry.path)
         if file_path.is_symlink() or not file_path.is_file():
             raise BackupSetValidationError("manifest_file_missing")
-        digest, size = _sha256_and_size(file_path)
+        digest, size = _sha256_and_size(file_path, ensure_time)
         if size != entry.size:
             raise BackupSetValidationError("manifest_size_invalid")
         if digest != entry.sha256:
@@ -208,6 +214,18 @@ def validate_backup_set(root: Path, relative_set_path: str) -> BackupManifest:
     )
 
 
+class _DeadlineReader(io.BufferedReader):
+    def __init__(self, raw: io.RawIOBase, ensure_time: Callable[[], object]) -> None:
+        super().__init__(raw)
+        self._ensure_time = ensure_time
+
+    def read(self, size: int | None = -1) -> bytes:
+        self._ensure_time()
+        content = super().read(size)
+        self._ensure_time()
+        return content
+
+
 class BackupArtifactWriter:
     """Create an atomically promoted set below the configured backup root."""
 
@@ -219,12 +237,16 @@ class BackupArtifactWriter:
         dump_runner: DumpRunner | None = None,
         file_root: Path | None = None,
         process_runner: ProcessRunner = subprocess.run,
+        timeout_seconds: int = 1800,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.root = Path(root)
         self.database_url = database_url
         self.dump_runner = dump_runner
         self.file_root = Path(file_root) if file_root is not None else None
         self.process_runner = process_runner
+        self.timeout_seconds = timeout_seconds
+        self.clock = clock
 
     @classmethod
     def from_settings(
@@ -240,6 +262,7 @@ class BackupArtifactWriter:
             dump_runner=dump_runner,
             file_root=Path(settings.file_storage_root),
             process_runner=process_runner,
+            timeout_seconds=max(1, settings.backup_job_timeout_seconds - 5),
         )
 
     def create(self, job_id: int) -> BackupArtifactResult:
@@ -247,15 +270,16 @@ class BackupArtifactWriter:
             raise _stable_error("backup_job_invalid", "Backup job is invalid.")
         temporary: Path | None = None
         promoted: Path | None = None
+        deadline = self.clock() + self.timeout_seconds
         try:
             self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
             self.root.chmod(0o700)
             temporary = self.root / f".tmp-{job_id}-{uuid4().hex}"
             temporary.mkdir(mode=0o700)
             database_path = temporary / "database.sql"
-            self._write_dump(database_path)
+            self._write_dump(database_path, deadline)
             archive_path = temporary / "files.tar"
-            self._write_file_archive(archive_path)
+            self._write_file_archive(archive_path, deadline)
             completed_at = datetime.now(timezone.utc).replace(microsecond=0)
             manifest_path = temporary / "manifest.json"
             manifest_path.write_text(
@@ -264,8 +288,8 @@ class BackupArtifactWriter:
                         "format_version": BACKUP_FORMAT_VERSION,
                         "completed_at": completed_at.isoformat(),
                         "files": [
-                            self._manifest_entry(database_path),
-                            self._manifest_entry(archive_path),
+                            self._manifest_entry(database_path, lambda: self._remaining(deadline)),
+                            self._manifest_entry(archive_path, lambda: self._remaining(deadline)),
                         ],
                     },
                     separators=(",", ":"),
@@ -274,19 +298,21 @@ class BackupArtifactWriter:
                 encoding="utf-8",
             )
             _fsync_file(manifest_path)
-            manifest_sha256, _ = _sha256_and_size(manifest_path)
+            manifest_sha256, _ = _sha256_and_size(manifest_path, lambda: self._remaining(deadline))
             final_relative = f"sets/{job_id}-{completed_at.strftime('%Y%m%dT%H%M%SZ')}"
             final_path = _inside(self.root, final_relative)
             final_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             if final_path.exists():
                 raise _stable_error("artifact_target_exists", "Backup artifact could not be promoted.")
-            validate_backup_set(self.root, temporary.name)
+            validate_backup_set(self.root, temporary.name, ensure_time=lambda: self._remaining(deadline))
             _fsync_directory(temporary)
             os.replace(temporary, final_path)
             _fsync_directory(final_path.parent)
             temporary = None
             promoted = final_path
-            manifest = validate_backup_set(self.root, final_relative)
+            manifest = validate_backup_set(
+                self.root, final_relative, ensure_time=lambda: self._remaining(deadline)
+            )
             result = BackupArtifactResult(
                 relative_set_path=final_relative,
                 manifest_sha256=manifest_sha256,
@@ -322,19 +348,25 @@ class BackupArtifactWriter:
         if directory.exists():
             raise _stable_error("artifact_cleanup_failed", "Backup artifact cleanup failed.")
 
-    def _write_dump(self, target: Path) -> None:
+    def _remaining(self, deadline: float) -> float:
+        remaining = deadline - self.clock()
+        if remaining <= 0:
+            raise _stable_error("backup_attempt_timeout", "Backup attempt timed out.")
+        return remaining
+
+    def _write_dump(self, target: Path, deadline: float) -> None:
         if self.dump_runner is not None:
             try:
                 self.dump_runner(target)
             except Exception:
                 raise _stable_error("dump_failed", "Database export failed.") from None
         else:
-            self._run_mysqldump(target)
+            self._run_mysqldump(target, deadline)
         if not target.is_file():
             raise _stable_error("dump_failed", "Database export failed.")
         _fsync_file(target)
 
-    def _run_mysqldump(self, target: Path) -> None:
+    def _run_mysqldump(self, target: Path, deadline: float) -> None:
         if not self.database_url:
             raise _stable_error("dump_configuration_invalid", "Database export configuration is invalid.")
         try:
@@ -360,28 +392,37 @@ class BackupArtifactWriter:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 env=environment,
+                timeout=self._remaining(deadline),
             )
             if getattr(result, "returncode", 1) != 0:
                 raise RuntimeError("mysqldump failed")
         except BackupArtifactError:
             raise
+        except subprocess.TimeoutExpired:
+            raise _stable_error("backup_attempt_timeout", "Backup attempt timed out.") from None
         except Exception:
             raise _stable_error("dump_failed", "Database export failed.") from None
 
-    def _write_file_archive(self, target: Path) -> None:
+    def _write_file_archive(self, target: Path, deadline: float) -> None:
         if self.file_root is None or not self.file_root.is_dir():
             raise _stable_error("file_archive_failed", "File archive creation failed.")
         try:
             root = self.file_root.resolve()
             with tarfile.open(target, mode="w") as archive:
                 for source in sorted(root.rglob("*")):
+                    self._remaining(deadline)
                     if source.is_symlink():
                         raise ValueError("symlinked storage file")
                     if not source.is_file():
                         continue
                     relative = source.relative_to(root).as_posix()
                     _portable_relative(relative)
-                    archive.add(source, arcname=relative, recursive=False)
+                    info = archive.gettarinfo(source, arcname=relative)
+                    with source.open("rb", buffering=0) as raw:
+                        with _DeadlineReader(
+                            cast(io.RawIOBase, raw), lambda: self._remaining(deadline)
+                        ) as stream:
+                            archive.addfile(info, stream)
             _fsync_file(target)
         except BackupArtifactError:
             raise
@@ -389,6 +430,8 @@ class BackupArtifactWriter:
             raise _stable_error("file_archive_failed", "File archive creation failed.") from None
 
     @staticmethod
-    def _manifest_entry(path: Path) -> Mapping[str, object]:
-        sha256, size = _sha256_and_size(path)
+    def _manifest_entry(
+        path: Path, ensure_time: Callable[[], object] | None = None
+    ) -> Mapping[str, object]:
+        sha256, size = _sha256_and_size(path, ensure_time)
         return {"path": path.name, "size": size, "sha256": sha256}

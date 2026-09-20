@@ -24,6 +24,10 @@ logs.
 5. This guide reserves `stage5-backup-uat` as its dedicated acceptance Compose
    project. Every acceptance Compose command below supplies that explicit
    project name; do not substitute the repository default or an existing stack.
+6. Keep exactly one normal backup worker in this acceptance project. The
+   attempt deadline bounds `mysqldump` and checks progress during file archive
+   and checksum work; a stalled underlying filesystem operation can still
+   delay it. Monitor unusually old `running` jobs and worker health.
 
 ## Build and start the acceptance stack
 
@@ -80,7 +84,9 @@ calling Docker, the command validates the manifest and checksums; it rejects
 paths outside the selected root and occupied recovery resources. Confirm that
 the acceptance project remains running and unchanged while the recovery
 project reports health, representative record counts, and the restored file
-count.
+count. The command copies and revalidates the two artifacts in a private
+temporary directory before Docker starts, so the operator must provide free
+temporary disk space at least as large as the backup set.
 
 Cleanup is an operator-owned, recoverable decision. First save the safe JSON
 report and confirm the project name is exactly `stage5-recovery-uat`; then,
@@ -94,6 +100,10 @@ docker compose -p stage5-recovery-uat -f compose.recovery.yaml down --volumes --
 
 This cleanup must never target the acceptance Compose project, its database
 volume, its file volume, or the external backup directory.
+
+The backup worker separately reclaims only validated, aged artifact sets that
+belong to known jobs but are not referenced by a completed job. Referenced
+successful sets remain under the configured retention policy.
 
 ## Forced final failure and one notification
 

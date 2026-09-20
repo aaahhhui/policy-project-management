@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from pathlib import Path, PurePosixPath, PureWindowsPath
+import re
 from shutil import rmtree
 from uuid import uuid4
 
@@ -28,6 +29,7 @@ _SAFE_FAILURES = {
     "artifact_validation_failed": ("backup_artifact_failed", "备份文件处理失败。"),
     "artifact_io_failed": ("backup_artifact_failed", "备份文件处理失败。"),
     "artifact_cleanup_failed": ("backup_artifact_failed", "备份文件处理失败。"),
+    "backup_attempt_timeout": ("backup_attempt_timeout", "备份任务执行超时。"),
 }
 
 
@@ -184,6 +186,60 @@ class BackupJobService:
         self._prepare_worker_transaction()
         with self.db.begin():
             return self._prune_completed_locked(now)
+
+    def prune_orphans(self, now: datetime) -> int:
+        """Remove aged, validated sets whose known job no longer owns them."""
+        self._prepare_worker_transaction()
+        sets_root = self.backup_root / "sets"
+        if not sets_root.is_dir() or sets_root.is_symlink():
+            return 0
+        cutoff = now.timestamp() - self.claim_timeout.total_seconds()
+        deleted = 0
+        try:
+            candidates = list(sets_root.iterdir())
+        except OSError:
+            return 0
+        with self.db.begin():
+            for candidate in candidates:
+                try:
+                    if candidate.is_symlink() or not candidate.is_dir():
+                        continue
+                    match = re.fullmatch(r"([1-9][0-9]*)-[0-9]{8}T[0-9]{6}Z", candidate.name)
+                    if match is None or candidate.stat().st_mtime > cutoff:
+                        continue
+                except OSError:
+                    continue
+                relative = f"sets/{candidate.name}"
+                job = self.db.scalar(
+                    select(BackupJob)
+                    .where(BackupJob.id == int(match.group(1)))
+                    .with_for_update()
+                )
+                if job is None or job.relative_set_path == relative or job.status == BackupStatus.RUNNING.value:
+                    continue
+                try:
+                    validate_backup_set(self.backup_root, relative)
+                    rmtree(candidate)
+                    if candidate.exists():
+                        raise OSError("backup set remains")
+                except Exception:
+                    AuditService(self.db).record(
+                        "backup_orphan_cleanup_failed",
+                        None,
+                        "backup",
+                        job.id,
+                        changes={"failure_code": "backup_orphan_cleanup_failed"},
+                    )
+                    continue
+                deleted += 1
+                AuditService(self.db).record(
+                    "backup_orphan_cleaned",
+                    None,
+                    "backup",
+                    job.id,
+                    changes={"status": job.status},
+                )
+        return deleted
 
     def _create(self, trigger_type: str, owner_id: int | None) -> BackupJob:
         job = BackupJob(

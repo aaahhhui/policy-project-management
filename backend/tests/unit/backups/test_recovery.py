@@ -9,6 +9,7 @@ from pathlib import Path
 import sys
 import subprocess
 import re
+from types import SimpleNamespace
 
 import pytest
 
@@ -45,10 +46,10 @@ class FakeRunner:
         arguments: tuple[str, ...],
         *,
         environment: dict[str, str],
-        input_data: bytes | None = None,
+        input_path: Path | None = None,
         timeout_seconds: int,
     ) -> str:
-        self.calls.append((arguments, environment, input_data, timeout_seconds))
+        self.calls.append((arguments, environment, input_path, timeout_seconds))
         if "recovery-health" in arguments[-1]:
             if self.health_failures:
                 self.health_failures -= 1
@@ -188,7 +189,7 @@ def test_recovery_runs_fixed_isolated_commands_and_returns_safe_report(tmp_path:
     assert report.completed_at == after
     calls = [call[0] for call in runner.calls]
     assert calls[0][-3:] == ("up", "-d", "mysql")
-    assert calls[1][-3:] == ("ping", "-h", "localhost")
+    assert calls[1][-3:] == ("-e", "SELECT 1", "policy")
     assert calls[2][-3:] == ("mysql", "-uroot", "policy")
     assert calls[3][-5:] == ("restore-files", "cp", "-a", "/input/.", "/runtime/files/")
     assert any(argument.endswith(":/input:ro") for argument in calls[3])
@@ -204,6 +205,57 @@ def test_recovery_runs_fixed_isolated_commands_and_returns_safe_report(tmp_path:
     safe = json.dumps(report.as_dict())
     for forbidden in (str(tmp_path), "CREATE TABLE", "MYSQL_PWD", "password", "webhook"):
         assert forbidden not in safe
+
+
+def test_recovery_readiness_requires_authenticated_database_query(tmp_path: Path) -> None:
+    runner = FakeRunner()
+
+    restore_backup(tmp_path, _make_set(tmp_path), "stage5-recovery-1", runner)
+
+    readiness_command, readiness_environment, _, _ = runner.calls[1]
+    assert readiness_command[-11:] == (
+        "exec", "-T", "-e", "MYSQL_PWD", "mysql", "mysql",
+        "-uroot", "-N", "-e", "SELECT 1", "policy",
+    )
+    assert readiness_environment["MYSQL_PWD"] == readiness_environment["MYSQL_ROOT_PASSWORD"]
+
+
+def test_recovery_import_does_not_load_entire_sql_dump_into_memory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    set_path = _make_set(tmp_path)
+    runner = FakeRunner()
+    original_read_bytes = Path.read_bytes
+
+    def reject_dump_buffering(path: Path) -> bytes:
+        if path.name == "database.sql":
+            raise AssertionError("SQL dump must be streamed")
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", reject_dump_buffering)
+
+    restore_backup(tmp_path, set_path, "stage5-recovery-1", runner)
+
+    assert runner.calls[2][2] is not None
+    assert runner.calls[2][2].name == "database.sql"
+
+
+def test_recovery_rejects_set_changed_after_preflight_before_docker(tmp_path: Path) -> None:
+    set_path = _make_set(tmp_path)
+
+    class MutatingRunner(FakeRunner):
+        def target_resources(self, project_name: str, environment: dict[str, str]) -> set[str]:
+            (tmp_path / set_path / "database.sql").write_bytes(
+                b"X" * len(b"CREATE TABLE policies (id int);")
+            )
+            return super().target_resources(project_name, environment)
+
+    runner = MutatingRunner()
+
+    with pytest.raises(RecoveryRefused, match="manifest_checksum_invalid"):
+        restore_backup(tmp_path, set_path, "stage5-recovery-1", runner)
+
+    assert runner.calls == []
 
 
 def test_recovery_polls_health_before_verification(tmp_path: Path) -> None:
@@ -370,6 +422,35 @@ def test_docker_runner_converts_a_stalled_subprocess_to_a_safe_timeout(
         )
 
 
+def test_docker_runner_streams_sql_from_file_handle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts.recover_backup import DockerRecoveryRunner
+
+    dump = tmp_path / "database.sql"
+    dump.write_bytes(b"CREATE TABLE test (id int);")
+    observed = {"streamed": False}
+
+    def inspect_subprocess(_arguments: tuple[str, ...], **kwargs: object) -> object:
+        assert "input" not in kwargs
+        stream = kwargs["stdin"]
+        assert stream is not None
+        assert stream.read() == b"CREATE TABLE test (id int);"
+        observed["streamed"] = True
+        return SimpleNamespace(returncode=0, stdout=b"")
+
+    monkeypatch.setattr("scripts.recover_backup.subprocess.run", inspect_subprocess)
+
+    DockerRecoveryRunner().run(
+        ("docker", "compose", "exec"),
+        environment=build_recovery_environment(),
+        input_path=dump,
+        timeout_seconds=10,
+    )
+
+    assert observed["streamed"] is True
+
+
 def test_recovery_compose_has_internal_network_and_pinned_offline_restore_helper() -> None:
     compose = (Path(__file__).parents[4] / "compose.recovery.yaml").read_text(encoding="utf-8")
 
@@ -387,7 +468,7 @@ def test_runner_failure_has_only_a_stable_safe_code(tmp_path: Path) -> None:
             arguments: tuple[str, ...],
             *,
             environment: dict[str, str],
-            input_data: bytes | None = None,
+            input_path: Path | None = None,
             timeout_seconds: int,
         ) -> str:
             raise RuntimeError("acceptance-password at C:/unsafe")

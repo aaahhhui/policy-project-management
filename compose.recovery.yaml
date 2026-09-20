@@ -9,7 +9,7 @@ services:
     volumes:
       - recovery-mysql:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_ROOT_PASSWORD mysql -uroot -N -e 'SELECT 1' $$MYSQL_DATABASE >/dev/null"]
       interval: 5s
       timeout: 3s
       retries: 20

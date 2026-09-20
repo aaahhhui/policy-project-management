@@ -31,6 +31,7 @@ def run_once(
     with session_factory() as db:
         service = service_factory(db)
         service.recover_stale_claims(claimed_at)
+        service.prune_orphans(claimed_at)
         job = service.claim_next(claimed_at)
         if job is None:
             return False

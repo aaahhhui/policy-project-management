@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 import hashlib
 import json
+import os
 
 from app.modules.backups.artifacts import BackupArtifactResult
 from app.modules.backups.models import BackupJob
@@ -64,3 +65,37 @@ def test_prune_completed_removes_only_old_successful_rows_and_sets(tmp_path, db,
     assert not (tmp_path / "sets" / "old").exists()
     assert db.get(BackupJob, recent.id) is not None
     assert (tmp_path / "sets" / "recent").exists()
+
+
+def test_orphan_reconciliation_removes_only_stale_unreferenced_job_sets(tmp_path, db) -> None:
+    old_at = NOW - timedelta(hours=2)
+    young_at = NOW - timedelta(minutes=5)
+    referenced = BackupJob(trigger_type="scheduled", status="succeeded", attempt_count=1, version=1)
+    orphan = BackupJob(trigger_type="scheduled", status="failed", attempt_count=3, version=1)
+    young = BackupJob(trigger_type="scheduled", status="failed", attempt_count=3, version=1)
+    running = BackupJob(trigger_type="scheduled", status="running", attempt_count=1, version=1)
+    db.add_all([referenced, orphan, young, running])
+    db.flush()
+    referenced_path = f"sets/{referenced.id}-20260820T013000Z"
+    orphan_path = f"sets/{orphan.id}-20260820T013000Z"
+    young_path = f"sets/{young.id}-20260820T032500Z"
+    running_path = f"sets/{running.id}-20260820T013000Z"
+    referenced.relative_set_path = referenced_path
+    db.commit()
+    for relative, completed_at in (
+        (referenced_path, old_at),
+        (orphan_path, old_at),
+        (young_path, young_at),
+        (running_path, old_at),
+    ):
+        _complete_set(tmp_path, relative, completed_at)
+        modified_at = completed_at.timestamp()
+        os.utime(tmp_path / relative, (modified_at, modified_at))
+
+    service = BackupJobService(db, backup_root=tmp_path, claim_timeout=timedelta(minutes=30))
+
+    assert service.prune_orphans(NOW) == 1
+    assert (tmp_path / referenced_path).exists()
+    assert not (tmp_path / orphan_path).exists()
+    assert (tmp_path / young_path).exists()
+    assert (tmp_path / running_path).exists()

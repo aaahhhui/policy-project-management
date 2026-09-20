@@ -2,12 +2,16 @@ from collections.abc import Iterator
 from io import StringIO
 import logging
 from pathlib import Path
+import os
+import subprocess
+import sys
 
 import pytest
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import Connection, create_engine, inspect, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
 
@@ -26,6 +30,32 @@ def test_stage5_migration_follows_stage6_as_the_only_head() -> None:
     scripts = ScriptDirectory.from_config(_alembic_config())
     assert scripts.get_heads() == [STAGE5_REVISION]
     assert scripts.get_revision(STAGE5_REVISION).down_revision == PREVIOUS_REVISION
+
+
+def test_alembic_registers_backup_model_for_future_autogenerate() -> None:
+    backend_root = Path(__file__).parents[3]
+    environment = dict(os.environ)
+    environment.update(
+        DATABASE_URL="mysql+pymysql://policy:policy@localhost:3306/policy",
+        JWT_SECRET="test-secret-at-least-32-characters",
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from alembic import command; "
+            "from alembic.config import Config; "
+            "from app.db.base import Base; "
+            "command.upgrade(Config('alembic.ini'), 'head', sql=True); "
+            "raise SystemExit(0 if 'backup_jobs' in Base.metadata.tables else 1)",
+        ],
+        cwd=backend_root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.fixture
@@ -251,3 +281,44 @@ def test_stage5_downgrade_removes_only_backup_jobs(
         )
     engine.dispose()
     get_settings.cache_clear()
+
+
+def test_stage5_mysql_downgrade_and_reupgrade_preserve_stage6(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_url = os.environ.get("STAGE5_MYSQL_TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("requires dedicated Stage 5 MySQL test database")
+    url = make_url(database_url)
+    if not url.drivername.startswith("mysql") or url.database != "stage5_test":
+        pytest.fail("Stage 5 MySQL migration test requires database stage5_test")
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    monkeypatch.setenv("JWT_SECRET", "test-secret-at-least-32-characters")
+    get_settings.cache_clear()
+    config = _alembic_config()
+    engine = create_engine(database_url)
+    try:
+        command.upgrade(config, "head")
+        with engine.connect() as connection:
+            assert inspect(connection).has_table("backup_jobs")
+
+        command.downgrade(config, PREVIOUS_REVISION)
+        with engine.connect() as connection:
+            inspector = inspect(connection)
+            assert not inspector.has_table("backup_jobs")
+            assert "entry_url" in {
+                item["name"] for item in inspector.get_columns("policy_sources")
+            }
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+                PREVIOUS_REVISION
+            )
+
+        command.upgrade(config, "head")
+        with engine.connect() as connection:
+            assert inspect(connection).has_table("backup_jobs")
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+                STAGE5_REVISION
+            )
+    finally:
+        engine.dispose()
+        get_settings.cache_clear()

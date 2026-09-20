@@ -34,11 +34,15 @@ def list_backups(
     page_size: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> BackupJobPage:
-    if requested_from is not None and requested_to is not None and requested_from > requested_to:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail={"code": "backup_filter_validation_failed"},
-        )
+    if requested_from is not None and requested_to is not None:
+        if (
+            (requested_from.utcoffset() is None) != (requested_to.utcoffset() is None)
+            or requested_from > requested_to
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail={"code": "backup_filter_validation_failed"},
+            )
     filters = []
     if status_code is not None:
         filters.append(BackupJob.status == status_code)

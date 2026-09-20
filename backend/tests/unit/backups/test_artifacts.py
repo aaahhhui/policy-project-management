@@ -2,6 +2,7 @@ import hashlib
 import json
 from datetime import timezone
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -246,6 +247,50 @@ def test_writer_uses_environment_for_database_password_not_command_arguments(tmp
     assert "password" not in " ".join(commands[0])
 
 
+def test_dump_timeout_stops_attempt_and_removes_partial_set(tmp_path: Path) -> None:
+    file_root = tmp_path / "files"
+    file_root.mkdir()
+
+    def timed_out_runner(command: list[str], *, timeout: float, **_: object) -> object:
+        assert 0 < timeout <= 25
+        raise subprocess.TimeoutExpired(command, timeout)
+
+    with pytest.raises(BackupArtifactError) as error:
+        BackupArtifactWriter(
+            tmp_path,
+            database_url="mysql+pymysql://backup_user:password@db:3307/policy",
+            file_root=file_root,
+            timeout_seconds=25,
+            process_runner=timed_out_runner,
+        ).create(17)
+
+    assert error.value.code == "backup_attempt_timeout"
+    assert not list(tmp_path.glob(".tmp-*"))
+
+
+def test_archive_respects_remaining_attempt_deadline(tmp_path: Path) -> None:
+    file_root = tmp_path / "files"
+    file_root.mkdir()
+    (file_root / "policy.html").write_text("test", encoding="utf-8")
+    clock_state = {"now": 0.0}
+
+    def dump_runner(target: Path) -> None:
+        target.write_bytes(b"sql")
+        clock_state["now"] = 30.0
+
+    with pytest.raises(BackupArtifactError) as error:
+        BackupArtifactWriter(
+            tmp_path,
+            dump_runner=dump_runner,
+            file_root=file_root,
+            timeout_seconds=25,
+            clock=lambda: clock_state["now"],
+        ).create(17)
+
+    assert error.value.code == "backup_attempt_timeout"
+    assert not list(tmp_path.glob(".tmp-*"))
+
+
 def test_writer_surfaces_stable_cleanup_failure_without_leaving_cleanup_best_effort(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -293,12 +338,12 @@ def test_writer_removes_promoted_set_when_post_promotion_validation_fails(
     real_validator = artifacts.validate_backup_set
     calls = 0
 
-    def fail_only_after_promotion(root: Path, relative_set_path: str):
+    def fail_only_after_promotion(root: Path, relative_set_path: str, **kwargs):
         nonlocal calls
         calls += 1
         if calls == 2:
             raise BackupSetValidationError("manifest_checksum_invalid")
-        return real_validator(root, relative_set_path)
+        return real_validator(root, relative_set_path, **kwargs)
 
     monkeypatch.setattr(artifacts, "validate_backup_set", fail_only_after_promotion)
     file_root = tmp_path / "files"

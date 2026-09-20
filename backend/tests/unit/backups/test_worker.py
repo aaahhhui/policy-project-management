@@ -40,6 +40,9 @@ class FakeService:
     def recover_stale_claims(self, _now: datetime) -> int:
         return 0
 
+    def prune_orphans(self, _now: datetime) -> int:
+        return 0
+
     def claim_next(self, _now: datetime) -> SimpleNamespace | None:
         return SimpleNamespace(id=7, claim_token="claim-token")
 

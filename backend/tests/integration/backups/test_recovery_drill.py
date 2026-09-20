@@ -21,10 +21,10 @@ class DrillRunner:
         arguments: tuple[str, ...],
         *,
         environment: dict[str, str],
-        input_data: bytes | None = None,
+        input_path: Path | None = None,
         timeout_seconds: int,
     ) -> str:
-        self.calls.append((arguments, environment, input_data))
+        self.calls.append((arguments, environment, input_path))
         if "recovery-health" in arguments[-1]:
             return "ok"
         if "recovery-verification" in arguments[-1]:

@@ -7,6 +7,7 @@ from app.db.base import Base
 from app.modules.auth import models as auth_models
 from app.modules.collection import models as collection_models
 from app.modules.audit import models as audit_models
+from app.modules.backups import models as backup_models
 from app.modules.evaluation_rules import models as evaluation_rule_models
 from app.modules.evaluations import models as evaluation_models
 from app.modules.notifications import models as notification_models
@@ -22,6 +23,7 @@ if config.config_file_name is not None and config.attributes.get("connection") i
 _MODEL_MODULES = (
     audit_models,
     auth_models,
+    backup_models,
     collection_models,
     evaluation_rule_models,
     evaluation_models,

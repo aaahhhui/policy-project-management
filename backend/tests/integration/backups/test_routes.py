@@ -122,6 +122,22 @@ def test_owner_gets_404_for_missing_backup_job(client, seeded_owner, seeded_owne
     assert response.status_code == 404
 
 
+def test_backup_filters_reject_mixed_naive_and_aware_datetimes(
+    client, seeded_owner, seeded_owner_password
+) -> None:
+    _login(client, seeded_owner.login_name, seeded_owner_password)
+
+    response = client.get(
+        "/api/backups",
+        params={
+            "requested_from": "2026-08-20T00:00:00",
+            "requested_to": "2026-08-21T00:00:00Z",
+        },
+    )
+
+    assert response.status_code == 422
+
+
 def test_backup_response_redacts_claims_paths_credentials_and_raw_stderr(
     client, db, seeded_owner, seeded_owner_password
 ) -> None:
