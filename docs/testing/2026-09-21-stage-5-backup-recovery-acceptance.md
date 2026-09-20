@@ -67,6 +67,10 @@ claim a Compose deployment or an external notification delivery.
   acceptance remain unexecuted.
 - Final whole-backend run against the rebuilt image and current source mounts:
   `653 passed, 6 skipped`; Ruff and mypy remained clean.
+- After recording the evidence, only this drill's three disposable MySQL
+  containers, five named test volumes, and internal test network were removed
+  by their exact names. Their test data is not recoverable. No pre-existing
+  container, volume, network, or operator backup directory was removed.
 
 ## Not executed / not implied
 
