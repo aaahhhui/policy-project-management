@@ -15,14 +15,16 @@ from app.modules.sources.models import PolicySource
 
 STAGE4_REVISION = "0008_stage4_notifications"
 STAGE6_REVISION = "0009_stage6_source_profile"
+STAGE5_REVISION = "0010_stage5_backups"
 
 
-def test_stage6_revision_follows_stage4_as_the_single_alembic_head() -> None:
+def test_stage6_revision_follows_stage4_and_precedes_stage5_head() -> None:
     config = Config(str(Path(__file__).parents[2] / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == [STAGE6_REVISION]
+    assert script.get_heads() == [STAGE5_REVISION]
     assert script.get_revision(STAGE6_REVISION).down_revision == STAGE4_REVISION
+    assert script.get_revision(STAGE5_REVISION).down_revision == STAGE6_REVISION
 
 
 @pytest.fixture

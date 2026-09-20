@@ -83,6 +83,18 @@ services:
       mysql:
         condition: service_healthy
 
+  backup:
+    <<: *worker-runtime
+    build: ./backend
+    command: python -m workers.backup
+    env_file: .env
+    volumes:
+      - policy-files:/runtime/files:ro
+      - ${BACKUP_ROOT}:/runtime/backups
+    depends_on:
+      mysql:
+        condition: service_healthy
+
   web:
     build: ./frontend
     ports:

@@ -11,6 +11,7 @@ from app.modules.evaluations.models import EntityEvaluation, EvaluationBatch
 from app.modules.policies.models import Policy, PolicyVersion
 
 if TYPE_CHECKING:
+    from app.modules.backups.models import BackupJob
     from app.modules.collection.models import CollectionTask
     from app.modules.notifications.models import SourceHealthState
     from app.modules.projects.models import Project
@@ -39,6 +40,27 @@ class _EvaluationSnapshot:
     high_match: bool
     threshold: int
     entity_match_levels: dict[str, str]
+
+
+def backup_failed_notification_event(job: BackupJob) -> NotificationEvent:
+    """Build the sole final-failure event from safe backup job fields."""
+    if job.completed_at is None or job.failure_summary is None:
+        raise ValueError("final backup failure is incomplete")
+    return NotificationEvent(
+        event_key=f"backup:{job.id}:failed",
+        event_type="backup_failed",
+        display_type="备份失败",
+        object_type="backup",
+        object_id=job.id,
+        object_name=f"备份任务 #{job.id}",
+        detail_path="/notifications",
+        message_snapshot={
+            "job_id": job.id,
+            "trigger_type": job.trigger_type,
+            "failure_summary": job.failure_summary,
+            "completed_at": job.completed_at.isoformat(),
+        },
+    )
 
 
 def project_created_notification_event(project: Project) -> NotificationEvent:

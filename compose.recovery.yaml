@@ -1,0 +1,54 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - recovery-mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - recovery-internal
+
+  api:
+    build: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    environment:
+      APP_ENV: ${APP_ENV}
+      AI_ADAPTER: ${AI_ADAPTER}
+      DATABASE_URL: ${DATABASE_URL}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      FILE_STORAGE_ROOT: ${FILE_STORAGE_ROOT}
+      JWT_SECRET: ${JWT_SECRET}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+      WECOM_WEBHOOK_URL: ${WECOM_WEBHOOK_URL}
+    volumes:
+      - recovery-files:/runtime/files
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - recovery-internal
+
+  restore-files:
+    image: alpine@sha256:79ff19e9084a00eece421b2523fb93e22d730e2c0e525905de047e848e56d95f
+    network_mode: none
+    read_only: true
+    volumes:
+      - recovery-files:/runtime/files
+
+volumes:
+  recovery-mysql:
+    name: ${COMPOSE_PROJECT_NAME}_mysql
+  recovery-files:
+    name: ${COMPOSE_PROJECT_NAME}_files
+
+networks:
+  recovery-internal:
+    internal: true

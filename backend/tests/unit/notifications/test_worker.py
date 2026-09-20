@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from app.modules.notifications.adapters.base import DeliveryResult, NotificationMessage
 from app.modules.notifications.adapters.wecom import WeComConfigurationError
-from workers.notifier import run_once
+from workers.notifier import notification_message, run_once
 
 
 def _delivery():
@@ -130,3 +130,31 @@ def test_worker_turns_missing_configuration_into_safe_permanent_failure() -> Non
             "机器人未配置，请检查服务端配置。",
         )
     ]
+
+
+def test_backup_failure_message_allows_only_notifications_detail_path() -> None:
+    delivery = SimpleNamespace(
+        display_type="备份失败",
+        object_name_snapshot="备份任务 #17",
+        detail_path="/notifications",
+        event_type="backup_failed",
+        message_snapshot={
+            "job_id": 17,
+            "trigger_type": "manual",
+            "failure_summary": "数据库导出失败。",
+            "completed_at": "2026-08-20T03:30:00+00:00",
+        },
+        triggered_at=datetime(2026, 8, 20, 3, 30, tzinfo=UTC),
+    )
+
+    message = notification_message(
+        delivery, SimpleNamespace(public_base_url="https://demo.example.test")
+    )
+
+    assert message.facts == (
+        "备份任务：#17",
+        "触发方式：manual",
+        "数据库导出失败。",
+        "完成时间：2026-08-20T03:30:00+00:00",
+    )
+    assert message.detail_url == "https://demo.example.test/notifications"

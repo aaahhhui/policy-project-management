@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     schedule_timezone: str = "Asia/Shanghai"
     collection_cron_hour: int = 2
     collection_cron_minute: int = 0
+    backup_root: str = "/runtime/backups"
+    backup_cron_hour: int = Field(default=3, ge=0, le=23)
+    backup_cron_minute: int = Field(default=30, ge=0, le=59)
+    backup_retention_days: int = Field(default=7, ge=1)
+    backup_job_timeout_seconds: int = Field(default=1800, ge=30)
     ai_adapter: str = "mock"
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-v4-flash"

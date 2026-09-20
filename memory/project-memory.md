@@ -465,3 +465,11 @@
 - 无凭据浏览器验收使用真实当前 Vue build 与 fixture API：桌面负责人来源/档案写操作及审计可见，桌面 reader 可读且无写控件，640px 下来源/档案可读且写控件隐藏；预期的 `409`/`403` 浏览器控制台响应与契约一致。
 - 增量私钥、Bearer/provider token、WeCom webhook、宿主机路径和危险 DOM/执行 API 扫描无产品命中。Python `pip check` 无依赖冲突；镜像未安装 `pip-audit`。Node 生产依赖审计仍报告既有传递依赖 high `nanoid` `GHSA-2v37-7h3g-55p8` 与 moderate `postcss` `GHSA-fxqj-rqcc-2cmp`，本轮不扩大为依赖升级。
 - Compose 与带凭据的完整登录 UAT 仍明确延期：本轮未读取 `.env`、未启动 Compose。无凭据浏览器 fixture 验收与直接 MySQL 门禁不能替代该项。
+
+## 33. 2026-09-21 Stage 5 备份恢复续作中的整合基线
+
+- 已获准继续 Stage 5 上线收口；当前在 Stage 6 的独立工作树中移植 Stage 5 已提交实现，不改动 `main` 和原 Stage 5 分支。原 Stage 5 工作树的既有未提交修改及临时目录保持原样。
+- Stage 5 备份迁移已接在 Stage 6 `0009_stage6_source_profile` 之后，成为单一 head `0010_stage5_backups`；来源/档案与备份两套迁移均被保留。每日备份调度与 Stage 6 的仅启用来源调度共存。
+- Alembic 在程序化共用连接及离线 SQL 检查时禁用应用 logger 的测试污染已以失败测试复现和最小修复处理；整合后的 Linux 后端回归为 `644 passed / 5 skipped`，Ruff 和 mypy 通过。
+- 这只是代码整合检查点，不是 Stage 5 完成交付。仍需真实 MySQL 8.4 迁移、备份/隔离恢复、三次失败后单条通知、安全扫描、整分支审查与最终验收。此前未授权读取本地 `.env` 或启动既有 Compose；带凭据和真实机器人验收须另行确认。
+- Codex 周用量已设置 40% 剩余停止线：工作过程中主动检查，并启用当前任务的每小时静默监控；触线时应停止新工作、保存可恢复进度并询问后续安排，不自动重置额度。

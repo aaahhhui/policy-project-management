@@ -16,8 +16,8 @@ from app.modules.projects import models as project_models
 from app.modules.sources import models as source_models
 
 config = context.config
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+if config.config_file_name is not None and config.attributes.get("connection") is None:
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 _MODEL_MODULES = (
     audit_models,
