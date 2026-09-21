@@ -339,6 +339,36 @@ def test_default_collision_preflight_checks_project_networks(
     assert ("docker", "network", "ls", "--format", "{{.Name}}") in commands
 
 
+def test_default_collision_preflight_checks_compose_labels_for_custom_resource_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.recover_backup import DockerRecoveryRunner
+
+    project_name = "stage5-recovery-1"
+    labeled_resources = {
+        ("docker", "ps"): "custom-mysql-container",
+        ("docker", "volume", "ls"): "custom-mysql-volume",
+        ("docker", "network", "ls"): "custom-mysql-network",
+    }
+
+    def list_resources(command: tuple[str, ...], **_: object) -> subprocess.CompletedProcess[str]:
+        command_prefix = command[:2] if command[:2] == ("docker", "ps") else command[:3]
+        output = (
+            labeled_resources[command_prefix] + "\n"
+            if ("--filter", f"label=com.docker.compose.project={project_name}") in zip(
+                command, command[1:]
+            )
+            else ""
+        )
+        return subprocess.CompletedProcess(command, 0, stdout=output, stderr="")
+
+    monkeypatch.setattr("scripts.recover_backup.subprocess.run", list_resources)
+
+    resources = DockerRecoveryRunner().target_resources(project_name, build_recovery_environment())
+
+    assert resources == set(labeled_resources.values())
+
+
 def test_docker_runner_sets_a_timeout_on_every_subprocess(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -362,7 +392,7 @@ def test_docker_runner_sets_a_timeout_on_every_subprocess(
         ("docker", "version"), environment=environment, timeout_seconds=SQL_IMPORT_TIMEOUT_SECONDS
     )
 
-    assert timeouts == [DISCOVERY_TIMEOUT_SECONDS] * 3 + [SQL_IMPORT_TIMEOUT_SECONDS]
+    assert timeouts == [DISCOVERY_TIMEOUT_SECONDS] * 6 + [SQL_IMPORT_TIMEOUT_SECONDS]
 
 
 def test_recovery_assigns_longer_finite_timeouts_to_restore_operations(tmp_path: Path) -> None:

@@ -9,7 +9,10 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _STATUS_PATTERN = re.compile(r"^[a-z0-9_]{1,64}$")
-_SECRET_KEY_PATTERN = re.compile(r"password|secret|token|authorization|credential|header|path", re.IGNORECASE)
+_SECRET_KEY_PATTERN = re.compile(
+    r"password|secret|token|authorization|credential|header|path|api[_-]?key|webhook[_-]?url|cookie",
+    re.IGNORECASE,
+)
 _MAX_PROFILE_DATA_BYTES = 32 * 1024
 _MAX_PROFILE_DATA_DEPTH = 4
 _MAX_PROFILE_DATA_NODES = 64

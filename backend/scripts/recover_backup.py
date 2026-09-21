@@ -465,10 +465,14 @@ class DockerRecoveryRunner:
 
     def target_resources(self, project_name: str, environment: dict[str, str]) -> set[str]:
         resources: set[str] = set()
-        for command in (
-            ("docker", "ps", "-a", "--format", "{{.Names}}"),
-            ("docker", "volume", "ls", "--format", "{{.Name}}"),
-            ("docker", "network", "ls", "--format", "{{.Name}}"),
+        label_filter = f"label=com.docker.compose.project={project_name}"
+        for command, label_scoped in (
+            (("docker", "ps", "-a", "--format", "{{.Names}}"), False),
+            (("docker", "ps", "-a", "--filter", label_filter, "--format", "{{.Names}}"), True),
+            (("docker", "volume", "ls", "--format", "{{.Name}}"), False),
+            (("docker", "volume", "ls", "--filter", label_filter, "--format", "{{.Name}}"), True),
+            (("docker", "network", "ls", "--format", "{{.Name}}"), False),
+            (("docker", "network", "ls", "--filter", label_filter, "--format", "{{.Name}}"), True),
         ):
             try:
                 result = subprocess.run(
@@ -483,11 +487,14 @@ class DockerRecoveryRunner:
                 raise RecoveryRefused("recovery_docker_timeout") from None
             if result.returncode != 0:
                 raise RecoveryRefused("recovery_docker_unavailable")
-            resources.update(
-                item
-                for item in result.stdout.splitlines()
-                if item.startswith((project_name + "-", project_name + "_"))
-            )
+            if label_scoped:
+                resources.update(result.stdout.splitlines())
+            else:
+                resources.update(
+                    item
+                    for item in result.stdout.splitlines()
+                    if item.startswith((project_name + "-", project_name + "_"))
+                )
         return resources
 
     def run(

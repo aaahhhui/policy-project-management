@@ -312,6 +312,71 @@ def test_profile_response_roundtrip_preserves_long_values_and_legacy_secret(
     assert nested_legacy_secret not in str(updated.model_dump())
 
 
+def test_profile_data_redacts_and_preserves_common_credential_like_keys_in_nested_lists(
+    db, seeded_owner
+) -> None:
+    _seed_profiles(db)
+    profile = db.scalar(select(EnterpriseProfile))
+    assert profile is not None
+    profile.data = {
+        "api_key": "opaque-api-key",
+        "integrations": [
+            {"webhook_url": "https://hooks.invalid/opaque"},
+            {"session": {"cookie": "opaque-cookie"}},
+        ],
+    }
+    db.commit()
+    service = ProfileService(db)
+
+    projected = service.get_shared_profile(seeded_owner)
+
+    assert projected.data == {
+        "api_key": "[redacted]",
+        "integrations": [
+            {"webhook_url": "[redacted]"},
+            {"session": {"cookie": "[redacted]"}},
+        ],
+    }
+    updated = service.update_shared(
+        ProfilePatchInput(
+            expected_version=1,
+            data={**projected.data, "industry": "industrial_software"},
+        ),
+        seeded_owner,
+    )
+
+    db.flush()
+    assert profile.data == {
+        "api_key": "opaque-api-key",
+        "integrations": [
+            {"webhook_url": "https://hooks.invalid/opaque"},
+            {"session": {"cookie": "opaque-cookie"}},
+        ],
+        "industry": "industrial_software",
+    }
+    assert "opaque-api-key" not in str(updated.model_dump())
+    assert "https://hooks.invalid/opaque" not in str(updated.model_dump())
+    assert "opaque-cookie" not in str(updated.model_dump())
+
+
+def test_profile_patch_rejects_api_key_overwrite_without_an_audit_record(db, seeded_owner) -> None:
+    _seed_profiles(db)
+    profile = db.scalar(select(EnterpriseProfile))
+    assert profile is not None
+    profile.data = {"api_key": "opaque-api-key"}
+    db.commit()
+
+    with pytest.raises(ValueError):
+        ProfileService(db).update_shared(
+            ProfilePatchInput(expected_version=1, data={"api_key": "replacement-value"}),
+            seeded_owner,
+        )
+
+    assert profile.version == 1
+    assert profile.data == {"api_key": "opaque-api-key"}
+    assert db.scalar(select(AuditEvent)) is None
+
+
 @pytest.mark.parametrize(
     "incoming_data",
     [
