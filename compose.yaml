@@ -88,6 +88,8 @@ services:
     build: ./backend
     command: python -m workers.backup
     env_file: .env
+    environment:
+      BACKUP_ROOT: /runtime/backups
     volumes:
       - policy-files:/runtime/files:ro
       - ${BACKUP_ROOT}:/runtime/backups
