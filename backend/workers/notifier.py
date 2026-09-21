@@ -16,7 +16,7 @@ from app.modules.notifications.models import NotificationDelivery
 from app.modules.notifications.service import NotificationService
 
 SAFE_DETAIL_PATH = re.compile(
-    r"^/(?:policies/[1-9][0-9]*|projects/[1-9][0-9]*|sources|notifications/[1-9][0-9]*)$"
+    r"^/(?:policies/[1-9][0-9]*|projects/[1-9][0-9]*|sources|notifications(?:/[1-9][0-9]*)?)$"
 )
 
 
@@ -64,6 +64,15 @@ def notification_message(delivery: NotificationDelivery, settings: Any) -> Notif
             [
                 f"连续失败：{snapshot.get('consecutive_failure_count', 3)} 次",
                 str(snapshot.get("failure_summary", "来源连续采集异常。")),
+            ]
+        )
+    elif delivery.event_type == "backup_failed":
+        facts.extend(
+            [
+                f"备份任务：#{snapshot.get('job_id', '-')}",
+                f"触发方式：{snapshot.get('trigger_type', '-')}",
+                str(snapshot.get("failure_summary", "备份任务失败。")),
+                f"完成时间：{snapshot.get('completed_at', '-')}",
             ]
         )
     return NotificationMessage(

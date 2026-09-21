@@ -72,7 +72,7 @@ def seed_channel(db) -> SourceChannel:
     db.flush()
     source = PolicySource(
         name="Source",
-        home_url="https://example.test",
+        entry_url="https://example.test",
         adapter_status="ready",
         is_enabled=True,
         created_by=owner.id,

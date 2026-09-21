@@ -26,8 +26,11 @@ def test_snapshot_uses_exact_path_fsync_and_atomic_replace(tmp_path, monkeypatch
 
     assert path == "snapshots/12/3/page.html"
     assert (tmp_path / path).read_text() == "<html>snapshot</html>"
-    assert len(calls) == 2
+    assert len(calls) == 3
+    assert isinstance(calls[0], int)
+    assert isinstance(calls[1], tuple)
     assert calls[1][1].name == "page.html"
+    assert isinstance(calls[2], int)
 
 
 def test_snapshot_refuses_to_overwrite_preexisting_final_and_keeps_existing_content(tmp_path) -> None:
@@ -114,7 +117,11 @@ def test_attachment_downloader_exposes_timeout() -> None:
         HttpAttachmentDownloader(
             client_factory=lambda: Client(), resolver=lambda host: ["8.8.8.8"]
         ).download("https://example.test/timeout.pdf")
-    assert calls == [{"timeout": 20.0, "follow_redirects": False}]
+    assert len(calls) == 1
+    assert calls[0]["follow_redirects"] is False
+    remaining_timeout = calls[0]["timeout"]
+    assert isinstance(remaining_timeout, float)
+    assert 19.0 < remaining_timeout <= 20.0
 
 
 def test_attachment_downloader_exposes_http_error() -> None:

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 
-import { businessErrorMessage } from "../../api/errors";
+import { businessErrorMessage, getBusinessErrorCode } from "../../api/errors";
 import { transitionProject, type ProjectDetail, type ProjectStatus } from "../../api/projects";
 
 const props = defineProps<{ project: ProjectDetail }>();
@@ -19,7 +19,7 @@ const needsSubmission = computed(() => targetStatus.value === "submitted");
 const needsResult = computed(() => targetStatus.value === "succeeded" || targetStatus.value === "rejected");
 const needsTermination = computed(() => targetStatus.value === "terminated");
 function sync(project: ProjectDetail): void { targetStatus.value = transitions[project.status][0] ?? project.status; submittedOn.value = project.submitted_on ?? ""; resultOn.value = project.result_on ?? ""; resultNote.value = project.result_note ?? ""; terminationNote.value = project.termination_note ?? ""; }
-function isVersionConflict(caught: unknown): boolean { return (caught as { response?: { data?: { detail?: { code?: string } } } })?.response?.data?.detail?.code === "project_version_conflict"; }
+function isVersionConflict(caught: unknown): boolean { return getBusinessErrorCode(caught)?.code === "project_version_conflict"; }
 async function submit(): Promise<void> {
   if (saving.value || !options.value.length || (needsTermination.value && !terminationNote.value.trim())) { if (needsTermination.value && !terminationNote.value.trim()) error.value = "请填写终止备注。"; return; }
   saving.value = true; error.value = ""; conflict.value = false;

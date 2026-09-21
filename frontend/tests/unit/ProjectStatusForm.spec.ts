@@ -51,7 +51,7 @@ describe("ProjectStatusForm", () => {
   });
 
   it("offers a reload action on a transition version conflict", async () => {
-    vi.mocked(transitionProject).mockRejectedValue({ response: { data: { detail: { code: "project_version_conflict" } } } });
+    vi.mocked(transitionProject).mockRejectedValue({ response: { status: 409, data: { detail: { code: "project_version_conflict", current_version: 4 } } } });
     const wrapper = mount(ProjectStatusForm, { props: { project } });
     await wrapper.get<HTMLSelectElement>("[aria-label='目标状态']").setValue("terminated");
     await wrapper.get<HTMLTextAreaElement>("[aria-label='终止备注']").setValue("主动终止");

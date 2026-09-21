@@ -47,7 +47,7 @@ def setup_task_items(db):
     db.flush()
     source = PolicySource(
         name="Pipeline source",
-        home_url="https://example.test",
+        entry_url="https://example.test",
         adapter_status="ready",
         is_enabled=True,
         created_by=owner.id,

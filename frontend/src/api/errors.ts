@@ -1,4 +1,41 @@
-const publicBusinessMessages: Record<string, string> = {
+const documentedBusinessStatuses = {
+  policy_not_convertible: [422],
+  policy_already_converted: [409],
+  primary_entity_missing: [422],
+  project_liaison_required: [422],
+  project_user_inactive: [422],
+  project_write_forbidden: [403],
+  project_transition_invalid: [422],
+  project_correction_invalid: [422],
+  project_field_validation_failed: [422],
+  project_version_conflict: [409],
+  idempotency_key_reused: [409],
+  rule_weight_total_invalid: [422],
+  no_published_evaluation_rule: [409],
+  evaluation_cancellation_conflict: [409],
+  evaluation_confirmation_conflict: [409],
+  confirmation_reason_required: [422],
+  primary_entity_required_for_recommendation: [409, 422],
+  primary_entity_not_eligible: [422],
+  primary_entity_reason_required: [422],
+  evaluation_not_confirmed: [409],
+  policy_conclusion_reason_required: [422],
+  source_not_found: [404],
+  source_state_conflict: [409],
+  source_version_conflict: [409],
+  source_not_collectable: [409],
+  collection_already_running: [409],
+  collection_task_not_found: [404],
+  invalid_source_request: [422],
+  profile_not_found: [404],
+  profile_version_conflict: [409],
+  profile_field_validation_failed: [422],
+  profile_no_changes: [422],
+} as const;
+
+export type BusinessErrorCode = keyof typeof documentedBusinessStatuses;
+
+const publicBusinessMessages: Partial<Record<BusinessErrorCode, string>> = {
   policy_not_convertible: "当前政策不满足转项目条件，请刷新政策详情。",
   policy_already_converted: "该政策已转为项目，请打开现有项目。",
   primary_entity_missing: "当前政策缺少主申报企业，暂不能转为项目。",
@@ -23,17 +60,44 @@ const publicBusinessMessages: Record<string, string> = {
 };
 
 const fallbackMessage = "操作未完成，请稍后重试。";
+const versionConflictCodes = new Set<BusinessErrorCode>([
+  "project_version_conflict",
+  "source_version_conflict",
+  "profile_version_conflict",
+]);
 
-function detailCode(error: unknown): string | null {
+function detailCode(error: unknown): BusinessErrorCode | null {
+  return getBusinessErrorCode(error)?.code ?? null;
+}
+
+export function getBusinessErrorCode(
+  error: unknown,
+): { code: BusinessErrorCode; currentVersion?: number } | null {
   if (!error || typeof error !== "object") return null;
   const response = (error as { response?: unknown }).response;
   if (!response || typeof response !== "object") return null;
+  const status = (response as { status?: unknown }).status;
+  if (typeof status !== "number" || !Number.isInteger(status)) return null;
   const data = (response as { data?: unknown }).data;
   if (!data || typeof data !== "object") return null;
   const detail = (data as { detail?: unknown }).detail;
   if (!detail || typeof detail !== "object") return null;
   const code = (detail as { code?: unknown }).code;
-  return typeof code === "string" ? code : null;
+  if (typeof code !== "string" || !Object.prototype.hasOwnProperty.call(documentedBusinessStatuses, code)) return null;
+  const documentedCode = code as BusinessErrorCode;
+  const allowedStatuses: readonly number[] = documentedBusinessStatuses[documentedCode];
+  if (!allowedStatuses.includes(status)) return null;
+  const currentVersion = (detail as { current_version?: unknown }).current_version;
+  if (versionConflictCodes.has(documentedCode)) {
+    if (
+      typeof currentVersion !== "number"
+      || !Number.isInteger(currentVersion)
+      || currentVersion < 1
+    ) return null;
+    return { code: documentedCode, currentVersion };
+  }
+  if (currentVersion !== undefined) return null;
+  return { code: documentedCode };
 }
 
 export function businessErrorMessage(error: unknown, fallback = fallbackMessage): string {

@@ -4,11 +4,16 @@ from subprocess import CompletedProcess
 import subprocess
 import sys
 
+import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.modules.collection.models import CollectionTaskItem
+from app.modules.collection.models import CollectionTask, CollectionTaskItem
 from app.modules.collection.service import CollectionTaskService
 from app.modules.sources.models import PolicySource, SourceChannel
+from app.modules.sources.recognition import RecognitionKind, RecognitionResult
+from app.modules.sources.schemas import SourceCreate, SourceRecognitionRetryInput
+from app.modules.sources.service import SourceService
 from workers.collector import cutoff_for, run_once
 
 
@@ -33,9 +38,28 @@ def test_collector_process_registers_policy_table_for_task_item_foreign_key():
 def _ready_source(db, owner) -> PolicySource:
     source = PolicySource(
         name="Ready worker source",
-        home_url="https://example.com",
+        entry_url="https://example.com",
+        collector_target_url="https://example.com",
         adapter_key="gdii",
         adapter_status="ready",
+        recognition_status="enabled",
+        is_enabled=True,
+        created_by=owner.id,
+        updated_by=owner.id,
+    )
+    db.add(source)
+    db.commit()
+    return source
+
+
+def _fixed_adapter_source(db, owner, adapter_key: str) -> PolicySource:
+    source = PolicySource(
+        name=f"{adapter_key} source",
+        entry_url="https://public.example/feed.xml",
+        collector_target_url="https://redirect.public.example/final-feed.xml",
+        adapter_key=adapter_key,
+        adapter_status="ready",
+        recognition_status="enabled",
         is_enabled=True,
         created_by=owner.id,
         updated_by=owner.id,
@@ -194,3 +218,318 @@ def test_run_once_refreshes_session_before_counting_items_written_by_spider(
     assert len(factory_calls) == 2
     assert task.status == "succeeded"
     assert (task.discovered_count, task.succeeded_count, task.failed_count) == (1, 1, 0)
+
+
+def test_run_once_uses_fixed_rss_collector_without_a_spider_command(db, seeded_owner):
+    source = _fixed_adapter_source(db, seeded_owner, "rss_atom")
+    task = CollectionTaskService(db).create(source.id, "scheduled", None)
+    commands = []
+    inspected_urls = []
+
+    def runner(command, **kwargs):
+        commands.append(command)
+        return CompletedProcess(command, 0)
+
+    def inspect(url):
+        inspected_urls.append(url)
+
+    assert run_once(
+        session_factory=lambda: nullcontext(db),
+        runner=runner,
+        public_url_inspector=inspect,
+    ) is True
+    assert inspected_urls == [source.collector_target_url]
+    assert commands == []
+    assert task.status == "succeeded"
+    assert (task.discovered_count, task.succeeded_count, task.failed_count) == (0, 0, 0)
+
+
+def test_run_once_rejects_unknown_persisted_collector_key_without_starting_a_process(
+    db, seeded_owner
+):
+    source = _fixed_adapter_source(db, seeded_owner, "unreleased")
+    task = CollectionTask(
+        source_id=source.id,
+        trigger_type="scheduled",
+        status="pending",
+    )
+    db.add(task)
+    db.commit()
+    commands = []
+
+    def runner(command, **kwargs):
+        commands.append(command)
+        return CompletedProcess(command, 0)
+
+    assert run_once(session_factory=lambda: nullcontext(db), runner=runner) is True
+    assert commands == []
+    assert task.status == "failed"
+    assert task.error_message == "collection could not be completed"
+
+
+class _ResultRecognizer:
+    def __init__(self, *results: RecognitionResult) -> None:
+        self._results = list(results)
+
+    def recognize(self, entry_url: str) -> RecognitionResult:
+        del entry_url
+        return self._results.pop(0)
+
+
+def _recognition_result(
+    *,
+    adapter_key: str,
+    collector_target_url: str,
+    kind: RecognitionKind = "rss_atom",
+) -> RecognitionResult:
+    return RecognitionResult(
+        status="ready_to_enable",
+        kind=kind,
+        summary="Safe recognized target",
+        previewed_at=datetime(2026, 8, 20),
+        adapter_key=adapter_key,
+        collector_target_url=collector_target_url,
+    )
+
+
+def test_created_redirected_feed_collects_the_validated_final_target(
+    db, seeded_owner
+):
+    final_target = "https://redirect.public.example/final-feed.xml"
+    service = SourceService(
+        db,
+        seeded_owner,
+        recognizer=_ResultRecognizer(
+            _recognition_result(
+                adapter_key="rss_atom",
+                collector_target_url=final_target,
+            )
+        ),
+    )
+    source = service.create(
+        SourceCreate(name="Redirected feed", entry_url="https://public.example/feed.xml")
+    )
+    service.enable(source.id, source.version)
+    task = CollectionTaskService(db).create(source.id, "scheduled", None)
+    inspected_urls: list[str] = []
+
+    assert run_once(
+        session_factory=lambda: nullcontext(db),
+        public_url_inspector=lambda url: inspected_urls.append(url),
+    ) is True
+
+    assert inspected_urls == [final_target]
+    assert task.status == "succeeded"
+
+
+def test_retried_representative_link_collects_its_validated_target(db, seeded_owner):
+    final_target = "https://final.public.example/policy/42"
+    service = SourceService(
+        db,
+        seeded_owner,
+        recognizer=_ResultRecognizer(
+            RecognitionResult(
+                status="pending_verification",
+                kind=None,
+                summary="Needs verification",
+                previewed_at=None,
+                adapter_key=None,
+                collector_target_url=None,
+            ),
+            _recognition_result(
+                adapter_key="single_policy_link",
+                collector_target_url=final_target,
+                kind="one_off_policy_link",
+            ),
+        ),
+    )
+    source = service.create(
+        SourceCreate(name="Representative link", entry_url="https://public.example")
+    )
+    source = service.retry_recognition(
+        source.id,
+        SourceRecognitionRetryInput(
+            representative_url="https://representative.public.example/policy/42"
+        ),
+    )
+    service.enable(source.id, source.version)
+    task = CollectionTaskService(db).create(source.id, "manual", seeded_owner.id)
+    inspected_urls: list[str] = []
+
+    assert run_once(
+        session_factory=lambda: nullcontext(db),
+        public_url_inspector=lambda url: inspected_urls.append(url),
+    ) is True
+
+    assert inspected_urls == [final_target]
+    assert task.status == "succeeded"
+
+
+@pytest.mark.parametrize("recognition_status", ["pending_verification", "rejected"])
+def test_retried_migrated_gdii_source_retires_stale_channels_before_collection(
+    db, seeded_owner, recognition_status
+):
+    listing_url = "https://gdii.gd.gov.cn/zwgk/tzgg1011/index.html"
+    historical_listing_url = "https://legacy.example/notices"
+    unrelated_channel_url = "https://legacy.example/archive"
+    source = PolicySource(
+        name=f"Migrated {recognition_status} GDII source",
+        entry_url="https://legacy.example/source",
+        adapter_key=None,
+        adapter_status="pending",
+        recognition_status=recognition_status,
+        recognition_summary="Migrated source awaiting recognition",
+        is_enabled=False,
+        created_by=seeded_owner.id,
+        updated_by=seeded_owner.id,
+        channels=[
+            SourceChannel(
+                code="notices",
+                name="Historical notices",
+                list_url=historical_listing_url,
+                is_enabled=False,
+            ),
+            SourceChannel(
+                code="historical_archive",
+                name="Historical archive",
+                list_url=unrelated_channel_url,
+                is_enabled=True,
+            ),
+        ],
+    )
+    db.add(source)
+    db.commit()
+    selected_channel_id = source.channels[0].id
+    stale_channel_id = source.channels[1].id
+
+    service = SourceService(
+        db,
+        seeded_owner,
+        recognizer=_ResultRecognizer(
+            _recognition_result(
+                adapter_key="gdii",
+                collector_target_url=listing_url,
+                kind="supported_government_site",
+            )
+        ),
+    )
+    retried = service.retry_recognition(
+        source.id,
+        SourceRecognitionRetryInput(representative_url=listing_url),
+    )
+
+    assert retried.is_enabled is False
+    assert retried.owner_confirmed_at is None
+    service.enable(retried.id, retried.version)
+    task = CollectionTaskService(db).create(retried.id, "manual", seeded_owner.id)
+    commands: list[list[str]] = []
+
+    def runner(command, **kwargs):
+        del kwargs
+        commands.append(command)
+        return CompletedProcess(command, 0)
+
+    assert run_once(session_factory=lambda: nullcontext(db), runner=runner) is True
+
+    channels = list(
+        db.scalars(
+            select(SourceChannel)
+            .where(SourceChannel.source_id == source.id)
+            .order_by(SourceChannel.id)
+        )
+    )
+    assert [
+        (channel.id, channel.code, channel.name, channel.list_url, channel.is_enabled)
+        for channel in channels
+    ] == [
+        (selected_channel_id, "notices", "通知公告", listing_url, True),
+        (
+            stale_channel_id,
+            "historical_archive",
+            "Historical archive",
+            unrelated_channel_url,
+            False,
+        ),
+    ]
+    assert len(commands) == 1
+    assert commands[0][:4] == ["scrapy", "crawl", "gdii", "-a"]
+    assert f"task_id={task.id}" in commands[0]
+    assert f"channel_id={selected_channel_id}" in commands[0]
+    assert f"list_url={listing_url}" in commands[0]
+
+
+def test_exact_gdii_create_enable_collects_the_materialized_official_channel(
+    db, seeded_owner
+):
+    listing_url = "https://gdii.gd.gov.cn/zwgk/tzgg1011/index.html"
+    service = SourceService(
+        db,
+        seeded_owner,
+        recognizer=_ResultRecognizer(
+            _recognition_result(
+                adapter_key="gdii",
+                collector_target_url=listing_url,
+                kind="supported_government_site",
+            )
+        ),
+    )
+    source = service.create(SourceCreate(name="Exact GDII", entry_url=listing_url))
+    service.enable(source.id, source.version)
+    task = CollectionTaskService(db).create(source.id, "manual", seeded_owner.id)
+    commands: list[list[str]] = []
+
+    def runner(command, **kwargs):
+        del kwargs
+        commands.append(command)
+        return CompletedProcess(command, 0)
+
+    assert run_once(
+        session_factory=lambda: nullcontext(db),
+        runner=runner,
+    ) is True
+
+    assert len(commands) == 1
+    assert f"list_url={listing_url}" in commands[0]
+    assert f"channel_id={source.channels[0].id}" in commands[0]
+    assert task.status == "failed"
+
+
+@pytest.mark.parametrize("adapter_key", ["gdii", "rss_atom"])
+def test_run_once_rejects_a_task_queued_before_its_source_is_disabled(
+    db, seeded_owner, adapter_key
+):
+    source = _ready_source(db, seeded_owner) if adapter_key == "gdii" else _fixed_adapter_source(
+        db, seeded_owner, adapter_key
+    )
+    if adapter_key == "gdii":
+        db.add(
+            SourceChannel(
+                source_id=source.id,
+                code="notices",
+                name="Notices",
+                list_url="https://gdii.gd.gov.cn/zwgk/tzgg1011/index.html",
+                is_enabled=True,
+            )
+        )
+        db.commit()
+    task = CollectionTaskService(db).create(source.id, "scheduled", None)
+    SourceService(db, seeded_owner).disable(source.id, source.version)
+    commands = []
+    inspected_urls = []
+
+    def runner(command, **kwargs):
+        commands.append(command)
+        return CompletedProcess(command, 0)
+
+    def inspect(url):
+        inspected_urls.append(url)
+
+    assert run_once(
+        session_factory=lambda: nullcontext(db),
+        runner=runner,
+        public_url_inspector=inspect,
+    ) is True
+    assert commands == []
+    assert inspected_urls == []
+    assert task.status == "failed"
+    assert task.error_message == "collection could not be completed"

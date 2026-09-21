@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from sqlalchemy import Boolean, Enum, ForeignKey, Integer, String, UniqueConstraint
+from datetime import datetime
+
+from sqlalchemy import Boolean, Enum, ForeignKey, Integer, JSON, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -15,16 +17,70 @@ ADAPTER_STATUS_TYPE = Enum(
     validate_strings=True,
 )
 
+SOURCE_RECOGNITION_STATUSES = (
+    "recognizing",
+    "ready_to_enable",
+    "enabled",
+    "pending_verification",
+    "rejected",
+    "disabled",
+)
+SOURCE_RECOGNITION_STATUS_TYPE = Enum(
+    *SOURCE_RECOGNITION_STATUSES,
+    name="source_recognition_status_code",
+    native_enum=False,
+    create_constraint=True,
+    validate_strings=True,
+)
+
+RECOGNITION_KINDS = (
+    "rss_atom",
+    "supported_government_site",
+    "public_listing_page",
+    "one_off_policy_link",
+)
+RECOGNITION_KIND_TYPE = Enum(
+    *RECOGNITION_KINDS,
+    name="source_recognition_kind_code",
+    native_enum=False,
+    create_constraint=True,
+    validate_strings=True,
+)
+
 
 class PolicySource(Base, TimestampMixin):
     __tablename__ = "policy_sources"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    home_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    entry_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     adapter_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     adapter_status: Mapped[str] = mapped_column(ADAPTER_STATUS_TYPE, nullable=False)
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    region_labels: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
+    topic_labels: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
+    recognition_status: Mapped[str] = mapped_column(
+        SOURCE_RECOGNITION_STATUS_TYPE,
+        nullable=False,
+        default="pending_verification",
+        server_default="pending_verification",
+    )
+    recognition_kind: Mapped[str | None] = mapped_column(RECOGNITION_KIND_TYPE, nullable=True)
+    recognition_summary: Mapped[str] = mapped_column(
+        String(500), nullable=False, default="", server_default=""
+    )
+    collector_target_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    previewed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    owner_confirmed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    enabled_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    disabled_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     updated_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
 

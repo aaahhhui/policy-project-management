@@ -1,20 +1,23 @@
 from datetime import UTC
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
-from app.modules.collection.models import CollectionTaskItem
+from app.modules.collection.models import CollectionTask, CollectionTaskItem
 from app.modules.collection.service import CollectionAlreadyRunning, CollectionTaskService
 from app.modules.notifications.models import NotificationDelivery, SourceHealthState
 from app.modules.sources.models import PolicySource, SourceChannel
+from app.modules.sources.service import SourceNotCollectable
 
 
 def _ready_source(db, owner) -> PolicySource:
     source = PolicySource(
         name="Ready source",
-        home_url="https://example.com",
+        entry_url="https://example.com",
+        collector_target_url="https://example.com",
         adapter_key="gdii",
         adapter_status="ready",
+        recognition_status="enabled",
         is_enabled=True,
         created_by=owner.id,
         updated_by=owner.id,
@@ -33,6 +36,22 @@ def test_source_cannot_have_two_active_tasks(db, seeded_owner):
     assert first.status == "pending"
     with pytest.raises(CollectionAlreadyRunning):
         service.create(source.id, "manual", seeded_owner.id)
+
+
+def test_create_refreshes_the_locked_source_before_queueing(db, seeded_owner):
+    source = _ready_source(db, seeded_owner)
+    db.execute(
+        update(PolicySource)
+        .where(PolicySource.id == source.id)
+        .values(recognition_status="disabled", is_enabled=False)
+        .execution_options(synchronize_session=False)
+    )
+    assert source.recognition_status == "enabled"
+
+    with pytest.raises(SourceNotCollectable):
+        CollectionTaskService(db).create(source.id, "manual", seeded_owner.id)
+
+    assert db.scalar(select(func.count()).select_from(CollectionTask)) == 0
 
 
 def test_claim_next_marks_oldest_pending_task_running(db, seeded_owner):

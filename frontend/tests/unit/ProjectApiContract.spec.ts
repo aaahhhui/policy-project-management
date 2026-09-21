@@ -22,7 +22,7 @@ import {
   transitionProject,
   updateProject,
 } from "../../src/api/projects";
-import { businessErrorMessage } from "../../src/api/errors";
+import { businessErrorMessage, getBusinessErrorCode } from "../../src/api/errors";
 
 describe("project API contract", () => {
   beforeEach(() => {
@@ -76,22 +76,36 @@ describe("project API contract", () => {
   });
 
   it("maps every Stage 3 business code to actionable Chinese copy", () => {
-    const cases = [
-      ["policy_not_convertible", "当前政策不满足转项目条件，请刷新政策详情。"],
-      ["policy_already_converted", "该政策已转为项目，请打开现有项目。"],
-      ["primary_entity_missing", "当前政策缺少主申报企业，暂不能转为项目。"],
-      ["project_liaison_required", "请选择项目对接人。"],
-      ["project_user_inactive", "所选项目用户已停用，请重新选择。"],
-      ["project_write_forbidden", "你没有权限修改这个项目。"],
-      ["project_transition_invalid", "当前状态不能执行这次变更。"],
-      ["project_correction_invalid", "当前状态不能执行这次更正。"],
-      ["project_field_validation_failed", "项目字段填写不符合要求，请检查后重试。"],
-      ["project_version_conflict", "项目已被他人更新，请重新加载后再操作。"],
-      ["idempotency_key_reused", "该创建请求已被使用，请刷新后重试。"],
+    const cases: Array<[string, number, string]> = [
+      ["policy_not_convertible", 422, "当前政策不满足转项目条件，请刷新政策详情。"],
+      ["policy_already_converted", 409, "该政策已转为项目，请打开现有项目。"],
+      ["primary_entity_missing", 422, "当前政策缺少主申报企业，暂不能转为项目。"],
+      ["project_liaison_required", 422, "请选择项目对接人。"],
+      ["project_user_inactive", 422, "所选项目用户已停用，请重新选择。"],
+      ["project_write_forbidden", 403, "你没有权限修改这个项目。"],
+      ["project_transition_invalid", 422, "当前状态不能执行这次变更。"],
+      ["project_correction_invalid", 422, "当前状态不能执行这次更正。"],
+      ["project_field_validation_failed", 422, "项目字段填写不符合要求，请检查后重试。"],
+      ["project_version_conflict", 409, "项目已被他人更新，请重新加载后再操作。"],
+      ["idempotency_key_reused", 409, "该创建请求已被使用，请刷新后重试。"],
     ];
 
-    for (const [code, message] of cases) {
-      expect(businessErrorMessage({ response: { data: { detail: { code } } } })).toBe(message);
+    for (const [code, status, message] of cases) {
+      const detail = code === "project_version_conflict"
+        ? { code, current_version: 4 }
+        : { code };
+      expect(businessErrorMessage({ response: { status, data: { detail } } })).toBe(message);
+    }
+  });
+
+  it("rejects inherited prototype business codes without throwing", () => {
+    for (const code of ["toString", "constructor", "__proto__"]) {
+      const error = { response: { status: 422, data: { detail: { code } } } };
+
+      expect(() => getBusinessErrorCode(error)).not.toThrow();
+      expect(getBusinessErrorCode(error)).toBeNull();
+      expect(() => businessErrorMessage(error)).not.toThrow();
+      expect(businessErrorMessage(error)).toBe("操作未完成，请稍后重试。");
     }
   });
 });

@@ -56,7 +56,7 @@ describe("ProjectCorrectionDialog", () => {
 
   it("offers a reload action on a correction version conflict", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    vi.mocked(correctProjectStatus).mockRejectedValue({ response: { data: { detail: { code: "project_version_conflict" } } } });
+    vi.mocked(correctProjectStatus).mockRejectedValue({ response: { status: 409, data: { detail: { code: "project_version_conflict", current_version: 4 } } } });
     const wrapper = mount(ProjectCorrectionDialog, { props: { project, mode: "status" } });
     await wrapper.get("form").trigger("submit");
     expect(wrapper.find("[data-reload-project]").exists()).toBe(true);

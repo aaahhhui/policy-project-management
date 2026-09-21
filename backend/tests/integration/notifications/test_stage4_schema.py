@@ -31,7 +31,7 @@ def migrated_connection(monkeypatch: pytest.MonkeyPatch) -> Iterator[Connection]
     engine = create_engine(database_url, poolclass=StaticPool)
     with engine.begin() as connection:
         config.attributes["connection"] = connection
-        command.upgrade(config, "head")
+        command.upgrade(config, STAGE4_REVISION)
         yield connection
 
     engine.dispose()
@@ -231,7 +231,7 @@ def test_stage4_migration_backfills_only_threshold_and_no_notifications(
             )
         )
 
-        command.upgrade(config, "head")
+        command.upgrade(config, STAGE4_REVISION)
 
         assert connection.scalar(
             text(
@@ -287,7 +287,7 @@ def test_stage4_downgrade_removes_only_stage4_schema(
 
     with engine.begin() as connection:
         config.attributes["connection"] = connection
-        command.upgrade(config, "head")
+        command.upgrade(config, STAGE4_REVISION)
         command.downgrade(config, PREVIOUS_REVISION)
         inspector = inspect(connection)
         assert {

@@ -1,5 +1,5 @@
 from app.modules.auth.models import Role, User
-from app.modules.collection.models import CollectionTaskItem
+from app.modules.collection.models import CollectionTask, CollectionTaskItem
 from app.modules.sources.models import PolicySource, SourceChannel
 
 
@@ -13,9 +13,11 @@ def _login(client, password, login_name):
 def _ready_source(db, owner) -> PolicySource:
     source = PolicySource(
         name="Ready source",
-        home_url="https://example.com",
+        entry_url="https://example.com",
+        collector_target_url="https://example.com",
         adapter_key="gdii",
         adapter_status="ready",
+        recognition_status="enabled",
         is_enabled=True,
         created_by=owner.id,
         updated_by=owner.id,
@@ -61,7 +63,48 @@ def test_owner_can_trigger_and_read_collection_task(
     assert detail.json()["status"] == "pending"
 
 
-def test_task_detail_exposes_item_errors(client, db, seeded_owner, seeded_owner_password):
+def test_collection_route_returns_only_stable_generic_conflict_codes(
+    client, db, seeded_owner, seeded_owner_password
+):
+    disabled = _ready_source(db, seeded_owner)
+    disabled.recognition_status = "disabled"
+    disabled.is_enabled = False
+    db.commit()
+    _login(client, seeded_owner_password, "owner")
+
+    not_collectable = client.post(f"/api/sources/{disabled.id}/collect")
+
+    assert not_collectable.status_code == 409
+    assert not_collectable.json()["detail"] == {"code": "source_not_collectable"}
+    assert "released collector" not in not_collectable.text
+    disabled.recognition_status = "enabled"
+    disabled.is_enabled = True
+    db.commit()
+    first = client.post(f"/api/sources/{disabled.id}/collect")
+    assert first.status_code == 201
+
+    duplicate = client.post(f"/api/sources/{disabled.id}/collect")
+
+    assert duplicate.status_code == 409
+    assert duplicate.json()["detail"] == {"code": "collection_already_running"}
+    assert "active collection task" not in duplicate.text
+
+
+def test_collection_route_returns_stable_generic_not_found_codes(
+    client, seeded_owner, seeded_owner_password
+):
+    _login(client, seeded_owner_password, "owner")
+
+    missing_source = client.post("/api/sources/999999/collect")
+    missing_task = client.get("/api/collection-tasks/999999")
+
+    assert missing_source.status_code == 404
+    assert missing_source.json()["detail"] == {"code": "source_not_found"}
+    assert missing_task.status_code == 404
+    assert missing_task.json()["detail"] == {"code": "collection_task_not_found"}
+
+
+def test_task_detail_redacts_crawl_errors_and_original_urls(client, db, seeded_owner, seeded_owner_password):
     source = _ready_source(db, seeded_owner)
     channel = SourceChannel(
         source_id=source.id,
@@ -78,11 +121,14 @@ def test_task_detail_exposes_item_errors(client, db, seeded_owner, seeded_owner_
         CollectionTaskItem(
             task_id=task_id,
             channel_id=channel.id,
-            original_url="https://example.com/failed",
+            original_url="https://crawler:secret-password@example.com/failed?token=secret-query-token",
             status="failed",
-            error_message="snapshot failed",
+            error_message="raw exception Authorization: Bearer secret-header",
         )
     )
+    task = db.get(CollectionTask, task_id)
+    assert task is not None
+    task.error_message = "raw collector exception: secret-error"
     db.commit()
 
     payload = client.get(f"/api/collection-tasks/{task_id}").json()
@@ -91,9 +137,17 @@ def test_task_detail_exposes_item_errors(client, db, seeded_owner, seeded_owner_
         {
             "id": 1,
             "channel_id": channel.id,
-            "original_url": "https://example.com/failed",
             "status": "failed",
             "policy_id": None,
-            "error_message": "snapshot failed",
+            "result_message": "采集失败，请稍后重试",
         }
     ]
+    assert payload["result_message"] == "采集未完成，请稍后重试"
+    for sensitive_value in (
+        "crawler",
+        "secret-password",
+        "secret-query-token",
+        "secret-header",
+        "secret-error",
+    ):
+        assert sensitive_value not in str(payload)
